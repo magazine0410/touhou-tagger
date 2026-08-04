@@ -1,0 +1,5 @@
+# Optional Japanese title romanisation.  Run `python -m unidic download`
+# after installing this group.
+mecab-python3==1.0.12
+unidic==1.1.0
+pykakasi==2.3.0

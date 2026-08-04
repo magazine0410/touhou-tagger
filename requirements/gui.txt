@@ -1,0 +1,2 @@
+# Optional GUI (required by ./launch.sh and the no-argument entry point).
+PyQt5==5.15.11

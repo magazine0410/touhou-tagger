@@ -1,0 +1,3 @@
+# Optional local-browser cookie auto-pull.  Manual THBWiki authentication
+# remains available without this package.
+browser-cookie3==0.20.1

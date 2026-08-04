@@ -1,0 +1,6 @@
+# Convenience install for every Python-based feature.
+-r ../requirements.txt
+-r gui.txt
+-r browser-fetch.txt
+-r cookie-auto-pull.txt
+-r romanisation.txt

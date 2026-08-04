@@ -1,0 +1,3 @@
+# CUE splitting has no extra Python packages beyond requirements.txt.
+# Install the system commands `ffmpeg` and `flac` (which includes `metaflac`)
+# instead. See docs/EXTERNAL_TOOLS.md for platform-specific installation.

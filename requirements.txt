@@ -1,0 +1,4 @@
+# Core CLI tagging and THBWiki access.  Python 3.10–3.14.
+beautifulsoup4==4.15.0
+mutagen==1.47.0
+curl_cffi==0.15.0

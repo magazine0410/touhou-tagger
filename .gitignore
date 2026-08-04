@@ -1,0 +1,110 @@
+# Python caches, test output, and environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.hypothesis/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+test-results/
+junit*.xml
+.cache/
+.tox/
+.nox/
+.venv/
+venv/
+env/
+.eggs/
+*.egg-info/
+pip-wheel-metadata/
+build/
+dist/
+
+# Runtime logs and diagnostic dumps
+logs/
+*.log
+
+# Per-user configuration and credentials (normally stored outside the repo)
+.env
+.env.*
+!.env.example
+config.local.*
+settings.local.*
+# Per-user config the app writes to its platform config dir; also ignored
+# here in case TOUHOU_TAGGER_CONFIG_DIR points inside the repo.  Several hold
+# personal paths (album_overrides is keyed by album directories; external_tools
+# holds executable paths; storage_locations holds config/log dir paths).
+auth.json
+thwiki_auth.json
+availability.json
+external_tools.json
+album_overrides.json
+preferences.json
+storage_locations.json
+stats.json
+stats_cache.json
+stats_result.json
+# Atomic-write temp files for any of the above.
+*.json.tmp
+cookies.txt
+cookies.json
+# The default Settings → Export configuration… filename.  Backups exclude
+# cookies but can contain local library and executable paths.
+touhou_tagger_backup.json
+
+# Copied browser profiles / authentication state
+browser-data/
+browser-profile/
+user-data-dir/
+playwright/.auth/
+**/Cookies
+**/Cookies-journal
+**/Login Data
+**/Login Data-journal
+**/Local State
+cookies.sqlite*
+key4.db
+logins.json
+
+# Local backups of removed/archived source (kept out of the release tree)
+backup/
+
+# Local assistant/editor settings
+.claude/settings.local.json
+.codex/
+.agents/
+.idea/
+.vscode/
+
+# Music-library and test-media files
+*.mp3
+*.flac
+*.ogg
+*.opus
+*.m4a
+*.mp4
+*.wav
+*.wave
+*.ape
+*.wv
+*.wma
+*.aac
+*.aiff
+*.aif
+*.cue
+test_music/
+sample_music/
+fixtures/music/
+# Test fixtures are deliberately small, non-personal regression samples.
+!tests/fixtures/**
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Personal .md files
+GITHUB_READINESS.md
