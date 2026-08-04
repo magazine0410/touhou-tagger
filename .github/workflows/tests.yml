@@ -15,6 +15,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Run Python in UTF-8 mode so the tagger's log glyphs (→, ✓, …) encode on
+# Windows too (its default cp1252 console otherwise raises UnicodeEncodeError).
+env:
+  PYTHONUTF8: "1"
+
 jobs:
   test:
     name: ${{ matrix.os }} / Python ${{ matrix.python-version }}

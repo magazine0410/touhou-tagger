@@ -2303,7 +2303,21 @@ def process_albums(
 # ---------------------------------------------------------------------------
 # Main (dispatches between GUI and CLI)
 # ---------------------------------------------------------------------------
+def _force_utf8_io() -> None:
+    """Make stdout/stderr use UTF-8 so the log glyphs (→, ✓, ⚠, …) don't crash
+    on a non-UTF-8 console — notably Windows, whose default cp1252 code page
+    cannot encode them (raises UnicodeEncodeError on the first such print)."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")  # TextIOWrapper, Python 3.7+
+        except (AttributeError, ValueError, OSError):
+            # Not a reconfigurable text stream (redirected/captured/detached);
+            # leave it as-is.
+            pass
+
+
 def main() -> None:
+    _force_utf8_io()
     # If no arguments are provided, launch the GUI
     if len(sys.argv) == 1:
         from gui import gui_main
