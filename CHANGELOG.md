@@ -9,6 +9,8 @@ Removed, or Security; do not use this file as a commit-by-commit log.
 
 ## Unreleased
 
+## 0.1.0 - 2026-08-05
+
 ### Added
 
 - Initial public-release preparation: user documentation, pinned dependency
