@@ -6,6 +6,8 @@
 
 The primary purpose of the tagger is to match remixes with their themes, so that remixes of specific themes can be found more easily. This is something normal taggers, such as MusicBrainz Picard, don't typically do. It uses `grouping` tags for this, so a player that supports them is necessary (e.g. [Quod Libet](https://github.com/quodlibet/quodlibet)) if you want to see the themes.
 
+In addition to this, it adds other tags to the songs as a bonus, the list of which can be found below under the Requirements section.
+
 ## Requirements
 
 - Python 3.10+
