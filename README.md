@@ -10,6 +10,9 @@ The primary purpose of the tagger is to match remixes with their themes, so that
 
 - Python 3.10+
 - curl
+- core Python packages: `beautifulsoup4`, `mutagen`, `curl_cffi` (installed in [Installing](#installing))
+- PyQt5 for the GUI (installed in [Installing](#installing); the default `launch.sh` opens the GUI)
+- A THBWiki browser cookie — **mandatory for every run** (see [Authentication](docs/AUTHENTICATION.md))
 
 ## Features
 
