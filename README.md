@@ -14,6 +14,9 @@ The primary purpose of the tagger is to match remixes with their themes, so that
 - PyQt5 for the GUI (installed in [Installing](#installing); the default `launch.sh` opens the GUI)
 - A THBWiki browser cookie — **mandatory for every run** (see [Authentication](docs/AUTHENTICATION.md))
 
+Optional features (English-wiki fetch, romanisation, CUE splitting) need extra
+dependencies; for them, check [Installing](#installing) and [DEPENDENCIES.md](docs/DEPENDENCIES.md).
+
 ## Features
 
 - fetches the following tags from English Touhou Wiki/THBWiki (optionally TouhouDB):
