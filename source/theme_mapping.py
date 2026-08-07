@@ -68,8 +68,9 @@ def _normalize_for_mapping(s: str) -> str:
     """
     Normalize a theme name for mapping lookup (mirrors build_theme_mapping.py).
 
-    Collapses whitespace variants, normalizes tilde glyphs (～/〜) to '~',
-    normalizes fullwidth punctuation, and strips trailing periods so that
+    Collapses whitespace variants, normalizes tilde glyphs (～/〜) and
+    spacing around them, folds case, normalizes fullwidth punctuation, and
+    strips trailing periods so that
     THBWiki variants like ``永夜抄　～ Eastern Night.`` match the canonical
     ``永夜抄　～ Eastern Night`` entry.  Themes whose canonical name does
     end in '.' or '...' still match correctly because the normalization
@@ -77,9 +78,10 @@ def _normalize_for_mapping(s: str) -> str:
     """
     s = re.sub(r'[\s\u3000\u2002-\u200b]+', ' ', s.strip())
     s = s.replace('\uff5e', '~').replace('\u301c', '~')
+    s = re.sub(r'\s*~\s*', ' ~ ', s)
     s = s.replace('\uff0c', ',').replace('\uff1f', '?').replace('\uff01', '!')
     s = s.rstrip('.')
-    return s
+    return s.casefold()
 
 
 def load_theme_mapping(mapping_path: str | None) -> dict | None:
@@ -89,11 +91,11 @@ def load_theme_mapping(mapping_path: str | None) -> dict | None:
     If mapping_path is None, looks for 'touhou_theme_mapping.json' in
     the same directory as this script.
 
-    The ``normalized_keys`` table is rebuilt from ``mapping`` using this
-    module's current ``_normalize_for_mapping`` function, so the in-tagger
-    normalize logic is authoritative and the JSON's precomputed table
-    can't go stale when the normalizer is tweaked.  The cost is ~1 ms
-    against a ~700-entry mapping.
+    The ``normalized_keys`` table is rebuilt from the primary ``mapping``
+    plus every named entry under ``sections`` using this module's current
+    ``_normalize_for_mapping`` function.  The merged mapping is exposed as
+    ``mapping`` at runtime for compatibility with existing consumers, while
+    the source JSON keeps Len'en and Seihou physically separate.
     """
     if mapping_path is None:
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -109,11 +111,22 @@ def load_theme_mapping(mapping_path: str | None) -> dict | None:
         print(f"Warning: Could not load theme mapping: {exc}")
         return None
 
-    # Re-derive normalized_keys from `mapping` so this script's
+    # Merge named sections and re-derive normalized_keys so this script's
     # _normalize_for_mapping is the single source of truth.  Earlier
     # entries win on collision, matching build_theme_mapping.py's
     # "first occurrence wins" behaviour.
-    mapping = data.get("mapping", {})
+    mapping = dict(data.get("mapping", {}))
+    sections = data.get("sections", {})
+    if isinstance(sections, dict):
+        for section in sections.values():
+            if not isinstance(section, dict):
+                continue
+            section_mapping = section.get("mapping", {})
+            if not isinstance(section_mapping, dict):
+                continue
+            for canonical, english in section_mapping.items():
+                mapping.setdefault(canonical, english)
+    data["mapping"] = mapping
     norm_keys: dict[str, str] = {}
     for canonical in mapping:
         nk = _normalize_for_mapping(canonical)
@@ -135,19 +148,24 @@ def translate_titles(
     if mapping_data is None:
         return tracks
 
-    mapping = mapping_data.get("mapping", {})
-    norm_keys = mapping_data.get("normalized_keys", {})
-
     for track in tracks:
-        translated = []
-        for title in track["original_titles"]:
-            nk = _normalize_for_mapping(title)
-            raw_key = norm_keys.get(nk)
-            english = mapping.get(raw_key) if raw_key else None
-            translated.append(english if english else title)
-        track["original_titles"] = translated
+        track["original_titles"] = [
+            translate_title(title, mapping_data)
+            for title in track["original_titles"]
+        ]
 
     return tracks
+
+
+def translate_title(title: str, mapping_data: dict | None) -> str:
+    """Return the canonical English mapping for one theme title, if known."""
+    if mapping_data is None:
+        return title
+
+    mapping = mapping_data.get("mapping", {})
+    norm_keys = mapping_data.get("normalized_keys", {})
+    raw_key = norm_keys.get(_normalize_for_mapping(title))
+    return mapping.get(raw_key, title) if raw_key else title
 
 
 def _inherit_instrumental_titles(tracks: list[dict]) -> list[dict]:
