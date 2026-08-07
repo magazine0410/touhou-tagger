@@ -49,7 +49,7 @@ touhou_tagger.py   entry point: fetch_album_plan() / tag_album_from_plan() /
                               lazy-imported only inside gui_main)
 ```
 
-`japanese_romanizer.py` (+ `japanese_romanizer_data.py`) is a standalone romaniser, soft-imported by `touhou_tagger.py` when present. `translate_genres.py` is a standalone CLI (imports only `tag_io` + `thwiki`, no network/Qt) that re-translates already-written CJK `genre` tags through `thwiki.GENRE_TRANSLATIONS` — the fast way to apply newly-added genre mappings to a library tagged before they existed, without re-fetching THBWiki. `build_theme_mapping/build_theme_mapping.py` (in the `build_theme_mapping/` subdirectory, alongside its `thpatch_ja.json`/`thpatch_en.json` input dumps) generates `source/touhou_theme_mapping.json` from two thpatch.net API JSON dumps; regenerate only on a new Touhou game/CD release.
+`japanese_romanizer.py` (+ `japanese_romanizer_data.py`) is a standalone romaniser, soft-imported by `touhou_tagger.py` when present. `translate_genres.py` is a standalone CLI (imports only `tag_io` + `thwiki`, no network/Qt) that re-translates already-written CJK `genre` tags through `thwiki.GENRE_TRANSLATIONS` — the fast way to apply newly-added genre mappings to a library tagged before they existed, without re-fetching THBWiki. `translate_groupings.py` is the equivalent network-free migration CLI for already-written semicolon-separated `grouping` tags; it uses `touhou_theme_mapping.json`, preserves unknown/manual components, and supports dry runs. Its `--stats-cache` mode shortlists paths from the Statistics scan cache, trusts only matching mtimes, rereads stale candidates, and deliberately excludes uncached files. `build_theme_mapping/build_theme_mapping.py` (in the `build_theme_mapping/` subdirectory, alongside its `thpatch_ja.json`/`thpatch_en.json` input dumps and reviewed `additional_theme_mappings.json`) generates `source/touhou_theme_mapping.json`. The generated JSON keeps Len'en and Seihou Project in named `sections`; `theme_mapping.load_theme_mapping()` merges them into the runtime `mapping`. Regenerate after a new Touhou game/CD release or a reviewed additional-section update.
 
 ## Non-negotiable network rules
 
@@ -93,6 +93,14 @@ python source/japanese_romanizer.py "path/to/album"
 # already-tagged files without re-fetching THBWiki. Idempotent; dry-run first.
 python source/translate_genres.py "path/to/music-library" --dry-run
 python source/translate_genres.py "path/to/music-library"
+
+# Re-translate existing grouping tags after a theme-mapping correction.
+# Network-free and idempotent; dry-run first.
+python source/translate_groupings.py "path/to/music-library" --dry-run
+python source/translate_groupings.py "path/to/music-library"
+# Large-library fast path after a completed Statistics scan:
+python source/translate_groupings.py --stats-cache --dry-run \
+  "path/to/music-library"
 
 # Regenerate the theme mapping after a new game/CD release.
 # Note: the builder and its two thpatch.net JSON dumps live in the

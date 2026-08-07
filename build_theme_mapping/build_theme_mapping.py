@@ -41,6 +41,48 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DEFAULT_OUTPUT = os.path.join(
     _PROJECT_ROOT, "source", "touhou_theme_mapping.json"
 )
+_ADDITIONAL_MAPPINGS = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "additional_theme_mappings.json",
+)
+
+
+# Reviewed aliases and source variants that are absent from, or misspelled in,
+# the thpatch title dumps.  Keeping them here ensures regeneration preserves
+# the corresponding entries in the generated JSON.  A ``None`` anchor means
+# the entry is deliberately appended at the end.
+_MANUAL_ALIASES: tuple[tuple[str, str | None, str, str], ...] = (
+    ("after", "夜の鳩山を飛ぶ - Power MIX",
+     "夜の鳩山を飛ぶ -Power MIX", "Fly above Hatoyama at night - Power MIX"),
+    ("after", "ハーセルヴス", "ハーセルヴズ", "Herselves"),
+    ("after", "幽夢　～ Inanimate Dream",
+     "幽夢　～ Inanimate Dream（未使用バージョン）",
+     "Faint Dream ~ Inanimate Dream (Unused Version)"),
+    ("after", "東方萃夢想", "東方萃夢想（Arrange）",
+     "Eastern Forgathering Dream (Arrange)"),
+    ("after", "月まで届け、不死の煙", "月まで届け不死の煙",
+     "Reach for the Moon, Immortal Smoke"),
+    ("after", "君はあの影を見たか？", "君はあの影を見たか",
+     "Did You See that Shadow?"),
+    ("after", "ロマンチック逃旅行", "ロマンチック逃飛行",
+     "Romantic Escape Flight"),
+    ("before", "今宵は飄逸なエゴイスト(Live ver) ～ Egoistic Flowers.",
+     "今宵は飄逸なエゴイスト　～ Egoistic Flowers.",
+     "Tonight Stars an Easygoing Egoist ~ Egoistic Flowers."),
+    ("after", "遥か38万キロのボヤージュ", "遥か３８万キロのボヤージュ",
+     "Faraway Voyage of 380,000 Kilometers"),
+    ("after", "風神少女", "風神少女(Short Version)",
+     "Wind God Girl (short version)"),
+    ("after", None, "河童様の云う通り ～ One-way Accelerator",
+     "The Kappa Way as Said ~ One-way Accelerator"),
+)
+
+# Reviewed corrections that intentionally differ from the current thpatch
+# English dump.  Keep these here so rebuilding cannot silently replace an
+# established canonical output.
+_MANUAL_OVERRIDES = {
+    "少女綺想曲　～ Capriccio": "Maiden's Capriccio",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -52,11 +94,11 @@ def normalize_key(s: str) -> str:
     Normalize a theme name for use as a lookup key.
 
     THBWiki's ``ogmusicname`` and the Touhou Patch Center's Japanese
-    titles may differ in whitespace (fullwidth vs ASCII), tilde
-    characters (～ vs ~ vs 〜), minor punctuation, and the presence
-    or absence of a trailing period.  This function collapses those
-    differences so that lookups succeed even when the sources aren't
-    byte-identical.
+    titles may differ in whitespace (fullwidth vs ASCII), spacing around
+    tilde characters (～ vs ~ vs 〜), Latin capitalization, minor
+    punctuation, and the presence or absence of a trailing period.  This
+    function collapses those differences so that lookups succeed even when
+    the sources aren't byte-identical.
 
     NOTE: this function is the single source of truth for normalization.
     The standalone tagger (touhou_tagger.py) re-derives
@@ -70,6 +112,8 @@ def normalize_key(s: str) -> str:
     s = re.sub(r'[\s\u3000\u2002-\u200b]+', ' ', s.strip())
     # Normalize tilde variants to ASCII tilde
     s = s.replace('\uff5e', '~').replace('\u301c', '~')
+    # Some THBWiki entries omit one or both spaces around the separator.
+    s = re.sub(r'\s*~\s*', ' ~ ', s)
     # Normalize fullwidth punctuation that sometimes varies
     s = s.replace('\uff0c', ',').replace('\uff1f', '?').replace('\uff01', '!')
     # Strip trailing periods.  Some THBWiki album pages render theme
@@ -81,7 +125,69 @@ def normalize_key(s: str) -> str:
     # English output value (read from ``mapping``, not the normalized
     # key) preserves whatever punctuation it has.
     s = s.rstrip('.')
-    return s
+    # Wiki capitalization is not consistent (e.g. "Red and White" versus
+    # the thpatch key "Red And White").  This is a lookup key only; the
+    # canonical English output keeps its original capitalization.
+    return s.casefold()
+
+
+def _add_manual_aliases(mapping: dict[str, str]) -> dict[str, str]:
+    """Return *mapping* with reviewed aliases inserted by their anchors."""
+    existing = set(mapping)
+    anchored: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    trailing: list[tuple[str, str]] = []
+    for position, anchor, title, english in _MANUAL_ALIASES:
+        if title in existing:
+            continue
+        if anchor is None:
+            trailing.append((title, english))
+        else:
+            anchored.setdefault((position, anchor), []).append(
+                (title, english)
+            )
+
+    result: dict[str, str] = {}
+    inserted: set[str] = set()
+    for title, english in mapping.items():
+        for alias, alias_english in anchored.get(("before", title), []):
+            result[alias] = alias_english
+            inserted.add(alias)
+        result[title] = english
+        for alias, alias_english in anchored.get(("after", title), []):
+            result[alias] = alias_english
+            inserted.add(alias)
+
+    # If an input dump drops an anchor, retain the reviewed alias rather than
+    # silently losing it. Explicit trailing entries remain last.
+    for aliases in anchored.values():
+        for alias, alias_english in aliases:
+            if alias not in inserted:
+                result[alias] = alias_english
+    for alias, alias_english in trailing:
+        result[alias] = alias_english
+    return result
+
+
+def _load_additional_sections() -> dict[str, dict]:
+    """Load reviewed non-Touhou mapping sections kept beside this builder."""
+    try:
+        with open(_ADDITIONAL_MAPPINGS, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"Error reading additional mappings: {exc}")
+        sys.exit(1)
+
+    sections = data.get("sections")
+    if not isinstance(sections, dict):
+        print("Error: additional mappings file has no 'sections' object.")
+        sys.exit(1)
+    for name, section in sections.items():
+        if not isinstance(section, dict) or not isinstance(
+            section.get("mapping"), dict
+        ):
+            print(f"Error: additional mapping section {name!r} is invalid.")
+            sys.exit(1)
+    return sections
 
 
 # ---------------------------------------------------------------------------
@@ -227,18 +333,61 @@ def main() -> None:
         norm_to_raw[nk] = ja_name
         norm_to_id[nk] = theme_id
 
+    # Add reviewed source aliases and preserve established corrections.
+    raw_mapping = _add_manual_aliases(raw_mapping)
+    for title, english in _MANUAL_OVERRIDES.items():
+        if title in raw_mapping:
+            raw_mapping[title] = english
+
+    # Non-Touhou projects are stored as explicit sections.  Remove any
+    # section entries supplied by thpatch (notably the first two Seihou
+    # games) from the primary mapping by normalized key so each title has
+    # one physical home in the output JSON.
+    sections = _load_additional_sections()
+    section_norms = {
+        normalize_key(title)
+        for section in sections.values()
+        for title in section["mapping"]
+    }
+    raw_mapping = {
+        title: english
+        for title, english in raw_mapping.items()
+        if normalize_key(title) not in section_norms
+    }
+
+    all_mappings = [raw_mapping]
+    all_mappings.extend(section["mapping"] for section in sections.values())
+    norm_to_raw = {}
+    total_theme_count = 0
+    identical_theme_count = 0
+    for mapping in all_mappings:
+        total_theme_count += len(mapping)
+        for title, english in mapping.items():
+            if title == english:
+                identical_theme_count += 1
+            norm_to_raw.setdefault(normalize_key(title), title)
+
     # ----- Build output -----
     output = {
         "metadata": {
             "description": (
                 "Mapping of Touhou original theme names: Japanese → "
-                "English.  Generated by build_theme_mapping.py from "
-                "Touhou Patch Center data."
+                "English, with reviewed Len'en and Seihou sections.  "
+                "Generated by build_theme_mapping.py from Touhou Patch "
+                "Center data and the section sources recorded below."
             ),
-            "theme_count": len(raw_mapping),
+            "theme_count": total_theme_count,
+            "section_counts": {
+                "touhou_and_reviewed": len(raw_mapping),
+                **{
+                    name: len(section["mapping"])
+                    for name, section in sections.items()
+                },
+            },
             "source": "https://www.thpatch.net/",
         },
         "mapping": raw_mapping,
+        "sections": sections,
         "normalized_keys": norm_to_raw,
     }
 
@@ -246,10 +395,13 @@ def main() -> None:
         json.dump(output, f, ensure_ascii=False, indent=2)
 
     # ----- Summary -----
-    print(f"\nSaved {len(raw_mapping)} theme mappings to {args.output}")
-    print(f"  Already-English (included): {skipped_identical}")
+    print(f"\nSaved {total_theme_count} theme mappings to {args.output}")
+    print(f"  Primary section:            {len(raw_mapping)}")
+    for name, section in sections.items():
+        print(f"  {name.title() + ' section:':<28}{len(section['mapping'])}")
+    print(f"  Already-English (included): {identical_theme_count}")
     print(f"  Unique translations:        "
-          f"{len(raw_mapping) - skipped_identical}")
+          f"{total_theme_count - identical_theme_count}")
 
     if skipped_dupes:
         print(f"  Duplicates (skipped):       {len(skipped_dupes)}")
