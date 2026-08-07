@@ -155,7 +155,13 @@ Review the output before running without --dry-run. Consider backing up music yo
 4. If you want, enable or disable settings from the right sidebar; if you want to see what it would do first without it actually affecting anything, toggle the "Dry run" setting. After that, hit **Tag All** - the tagger should try to find and tag the album automatically. It'll first cache all required data, in this case just for this album, then it'll tag them. Once it's done that, it'll show a summary screen plus details per track on the other tab. If it **didn't** find the album, you'll need to try and search for it in the wiki(s) yourself, then paste the "wiki slug" to the wiki slug field; e.g. in the URL https://thwiki.cc/Shout_at_The_Devil, that would mean pasting "Shout_at_The_Devil" into the field. Some symbols need manual fixing; e.g. an album with a "&" like [God & Guns](https://thwiki.cc/God_%26_Guns) has the ampersand replaced with "%26" in its URL. In the tagger, the slug needs to look like "God_&_Guns".
     - In some cases, the tagger may find a completely unrelated album that just happens to have the same name. The tagger is able to detect that and stop tagging - it'll pop up a screen, from which you can review what the differences are and either continue tagging as normal, skip the album or cancel the tagging process altogether.
 
-`grouping` (Touhou) themes live within `source/touhou_theme_mapping.json`. With new games and new themes, it can become outdated - you can manually add new themes by following the format in the file (remember to also add the titles into the `normalized_keys` section, otherwise it won't work), or you can wait for me to update the file.
+`grouping` theme translations live within `source/touhou_theme_mapping.json`.
+The primary Touhou/reviewed mapping is under `mapping`; verified Len'en and
+Seihou Project titles are kept separately under `sections.lenen.mapping` and
+`sections.seihou.mapping`. The tagger merges these sections when loading the
+file and rebuilds `normalized_keys` automatically. Persistent additions should
+also be made in `build_theme_mapping/additional_theme_mappings.json`, otherwise
+regenerating the main mapping can remove them.
     
 ### CLI
 
@@ -178,6 +184,37 @@ Supply additional `Wiki_Page_Slug` / album-folder pairs to process several
 albums in one run. Run `python touhou_tagger.py --help` for all options,
 including `--thwiki-only`, metadata/credit controls, romanisation controls,
 and optional TouhouDB verification.
+
+### Updating existing grouping tags
+
+If files were tagged before a theme-mapping correction was available, update
+their existing `grouping` tags locally without fetching either wiki. Always
+preview the library first:
+
+```bash
+python source/translate_groupings.py --dry-run "path/to/music-library"
+python source/translate_groupings.py "path/to/music-library"
+```
+
+The script walks directories recursively, handles semicolon-separated
+multi-theme groupings one component at a time, and preserves values that are
+not present in the theme map. Add `--verbose` to list changed files during a
+real run.
+
+For a large library that has already completed a Statistics-tab scan, use its
+per-file cache to avoid reopening every audio file:
+
+```bash
+python source/translate_groupings.py --stats-cache --dry-run \
+  "path/to/music-library"
+python source/translate_groupings.py --stats-cache \
+  "path/to/music-library"
+```
+
+Cache mode considers only files recorded in the active configuration
+directory's `stats_cache.json`. It validates the modification time of every
+shortlisted file and rereads stale candidates before changing them; files
+absent from the cache are not examined.
 
 ## Current known limitations
 
