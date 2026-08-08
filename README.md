@@ -36,7 +36,11 @@ dependencies; for them, check [Installing](#installing) and [DEPENDENCIES.md](do
     - titlesort (romanized locally)
     - vocalist
     - year
-    
+
+- the GUI's **Settings → Tag selection…** dialog lets you choose exactly
+  which of those fields the Wiki Tagger fetches and applies; all are selected
+  by default
+
 - usable with CLI and GUI
 - supports MP3, FLAC, Ogg Vorbis, Opus, and M4A
 - basic tag editing capability for small, manual fixes for specific tags

@@ -29,7 +29,7 @@ The directory contains:
 | `auth.json` | THBWiki browser choice, auto-pull preference, User-Agent, and `curl_cffi` impersonation profile. It never contains a browser cookie. |
 | `external_tools.json` | User-selected executable path overrides for external tools. It contains no credentials or command output. |
 | `album_overrides.json` | Reviewed Wiki Slug overrides keyed by normalized absolute album path. |
-| `preferences.json` | Non-secret folder scan depth, CUE original-handling choice, and small GUI state. |
+| `preferences.json` | Non-secret folder scan depth, CUE original-handling choice, Wiki Tagger field selection, and small GUI state. |
 | `storage_locations.json` | A non-secret pointer under the platform default directory for GUI-selected config/log locations. |
 
 The GUI's **Settings → Storage locations…** page shows the active directories,
@@ -42,7 +42,7 @@ custom location remains discoverable after a restart. Explicit
 take precedence and make the corresponding GUI change action read-only.
 
 **Settings → Export configuration…** writes an explicit, cookie-free JSON
-backup of browser preferences, executable paths, folder-scan/CUE preferences,
+backup of browser preferences, executable paths, folder-scan/CUE/tag-selection preferences,
 album identity overrides, unavailable-folder marks, Statistics' library root,
 and small GUI preferences. Cookies, browser profiles, and other session
 secrets are neither exported nor imported. The backup does contain local
