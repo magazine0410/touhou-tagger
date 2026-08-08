@@ -1,8 +1,8 @@
 """Small, non-secret GUI preferences shared by the standalone tagger.
 
 This module intentionally stores only user choices: folder-expansion depth,
-CUE post-processing, and a little window state.  Browser cookies and other
-session credentials do not belong here.
+CUE post-processing, Wiki Tagger output fields, and a little window state.
+Browser cookies and other session credentials do not belong here.
 """
 from __future__ import annotations
 
@@ -10,11 +10,15 @@ import json
 import os
 
 import availability
+from tag_selection import WIKI_TAGS, normalize_selected_tags
 
 
 DEFAULTS = {
     "scan_depth": 1,
     "cue_post_processing": "trash",
+    # All fields stay selected for an existing/first-run installation so the
+    # new picker preserves the Wiki Tagger's historical behaviour.
+    "wiki_tag_selection": list(WIKI_TAGS),
     "gui": {"width": 1120, "height": 620, "last_tab": 0},
 }
 SCAN_DEPTHS = (1, 2, 3)
@@ -29,6 +33,7 @@ def _copy_defaults() -> dict:
     return {
         "scan_depth": DEFAULTS["scan_depth"],
         "cue_post_processing": DEFAULTS["cue_post_processing"],
+        "wiki_tag_selection": list(DEFAULTS["wiki_tag_selection"]),
         "gui": dict(DEFAULTS["gui"]),
     }
 
@@ -51,6 +56,9 @@ def load() -> dict:
     policy = str(raw.get("cue_post_processing", "")).strip().lower()
     if policy in CUE_POST_PROCESSING:
         result["cue_post_processing"] = policy
+    selected_tags = normalize_selected_tags(raw.get("wiki_tag_selection"))
+    if selected_tags:
+        result["wiki_tag_selection"] = list(selected_tags)
     gui = raw.get("gui")
     if isinstance(gui, dict):
         for key in ("width", "height", "last_tab"):
@@ -74,6 +82,9 @@ def save(data: dict) -> bool:
             "cue_post_processing": data.get(
                 "cue_post_processing", current["cue_post_processing"]
             ),
+            "wiki_tag_selection": data.get(
+                "wiki_tag_selection", current["wiki_tag_selection"]
+            ),
             "gui": data.get("gui", current["gui"]),
         })
     clean = load()
@@ -86,6 +97,9 @@ def save(data: dict) -> bool:
     policy = str(current["cue_post_processing"]).strip().lower()
     if policy in CUE_POST_PROCESSING:
         clean["cue_post_processing"] = policy
+    selected_tags = normalize_selected_tags(current["wiki_tag_selection"])
+    if selected_tags:
+        clean["wiki_tag_selection"] = list(selected_tags)
     if isinstance(current.get("gui"), dict):
         for key in ("width", "height", "last_tab"):
             if key in current["gui"]:
@@ -123,3 +137,8 @@ def scan_depth() -> int:
 
 def cue_post_processing() -> str:
     return str(load()["cue_post_processing"])
+
+
+def wiki_tag_selection() -> tuple[str, ...]:
+    """Return the persisted Wiki Tagger output fields in display order."""
+    return tuple(load()["wiki_tag_selection"])

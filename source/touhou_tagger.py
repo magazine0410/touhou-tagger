@@ -80,6 +80,7 @@ from theme_mapping import (
     normalize,
 )
 from file_scan import scan_music_files
+from tag_selection import WIKI_TAGS, normalize_selected_tags
 
 # Optional: companion romaniser module.  When present, this script can
 # auto-fill the `titlesort` tag with a Hepburn romanisation of any
@@ -742,6 +743,52 @@ def _build_mismatch_context(
 # ---------------------------------------------------------------------------
 # Single-album processing (used by both CLI and GUI)
 # ---------------------------------------------------------------------------
+_METADATA_TAGS = frozenset({
+    "album", "albumartist", "albumartistsort", "catalognumber", "date",
+    "year", "genre",
+})
+_CREDIT_TAGS = frozenset({"arranger", "vocalist", "lyricist"})
+_ARTIST_TAGS = frozenset({"artist", "artistsort"})
+
+
+def _effective_selected_tags(selected_tags) -> tuple[str, ...]:
+    """Return a canonical selection, preserving all-tags legacy callers."""
+    if selected_tags is None:
+        return WIKI_TAGS
+    return normalize_selected_tags(selected_tags)
+
+
+def _tag_selection_fetch_options(
+    selected_tags,
+    *,
+    fetch_metadata: bool,
+    fetch_credits: bool,
+    use_touhoudb: bool,
+) -> dict[str, bool]:
+    """Derive the optional source enrichment required by selected outputs.
+
+    Core track lookup and HTML title cross-checking remain unconditional; this
+    only avoids album metadata, credit, and staff-name work when no selected
+    output could consume it.
+    """
+    selected = frozenset(_effective_selected_tags(selected_tags))
+    wants_metadata = bool(selected & _METADATA_TAGS)
+    wants_credits = bool(selected & _CREDIT_TAGS)
+    wants_artists = bool(selected & _ARTIST_TAGS) and use_touhoudb
+    metadata = bool(fetch_metadata and wants_metadata)
+    credits = bool(fetch_credits and (wants_credits or wants_artists))
+    staff_names = bool(
+        (metadata and "albumartistsort" in selected)
+        or (credits and wants_credits)
+        or (credits and use_touhoudb and "artistsort" in selected)
+    )
+    return {
+        "fetch_metadata": metadata,
+        "fetch_credits": credits,
+        "fetch_staff_names": staff_names,
+    }
+
+
 def _empty_result(
     album: str,
     *,
@@ -844,6 +891,9 @@ class AlbumPlan:
     fetch_credits: bool
     use_touhoudb: bool
     touhoudb_add_missing: bool
+    # Selected output fields, captured from the GUI at fetch time.  Direct
+    # callers that construct an AlbumPlan keep the historical all-tags mode.
+    selected_tags: tuple[str, ...] = field(default_factory=lambda: WIKI_TAGS)
     # Fetched + fully-prepared track data and album metadata.
     wiki_tracks: list = field(default_factory=list)
     source_used: str | None = None
@@ -898,6 +948,7 @@ def fetch_album_plan(
     fetch_credits: bool = True,
     use_touhoudb: bool = False,
     touhoudb_add_missing: bool = False,
+    selected_tags=None,
     retry_case_variants: bool = False,
 ) -> AlbumPlan:
     """Fetch and prepare all wiki/TouhouDB data for one album (no file I/O).
@@ -919,10 +970,30 @@ def fetch_album_plan(
     caller should abort on.  Per-album problems that aren't cookie-related
     (no music dir, album not on either wiki) are returned as a plan with
     ``error`` set instead.
+
+    ``selected_tags`` optionally limits the output fields prepared and written
+    by the resulting plan.  ``None`` preserves the historical all-fields
+    behaviour used by CLI callers.
     """
     print(f"\n{'=' * 60}")
     print(f"Album: {wiki_album}  →  {music_dir}")
     print("=" * 60)
+
+    selected_tags = _effective_selected_tags(selected_tags)
+    # Verification is an optional enrichment path for the TouhouDB-derived
+    # artist outputs.  With neither output selected it cannot affect a file,
+    # so don't perform its network work for a deliberately limited run.
+    use_touhoudb = bool(use_touhoudb and set(selected_tags) & _ARTIST_TAGS)
+    touhoudb_add_missing = bool(touhoudb_add_missing and use_touhoudb)
+    selection_options = _tag_selection_fetch_options(
+        selected_tags,
+        fetch_metadata=fetch_metadata,
+        fetch_credits=fetch_credits,
+        use_touhoudb=use_touhoudb,
+    )
+    fetch_metadata = selection_options["fetch_metadata"]
+    fetch_credits = selection_options["fetch_credits"]
+    fetch_staff_names = selection_options["fetch_staff_names"]
 
     def _plan(**kw) -> AlbumPlan:
         """Build an AlbumPlan, defaulting the captured options from args."""
@@ -932,6 +1003,7 @@ def fetch_album_plan(
             fetch_metadata=fetch_metadata, fetch_credits=fetch_credits,
             use_touhoudb=use_touhoudb,
             touhoudb_add_missing=touhoudb_add_missing,
+            selected_tags=selected_tags,
         )
         base.update(kw)
         return AlbumPlan(**base)
@@ -1149,7 +1221,7 @@ def fetch_album_plan(
         # gating only on fetch_credits would leave --no-credits runs
         # writing Japanese album-artists even when a romanisation was
         # available.
-        if fetch_credits or fetch_metadata:
+        if fetch_staff_names:
             staff_name_map = parse_thwiki_staff_names(thwiki_soup)
             if staff_name_map:
                 print(f"  Built name mapping: {len(staff_name_map)} "
@@ -1242,13 +1314,15 @@ def fetch_album_plan(
     # arranger/vocalist/lyricist tags get romanised below.  The new `artist`
     # tag carries these original names, while `artistsort` carries the
     # romanised form, so the two must be captured separately.
-    for t in wiki_tracks:
-        t["arrangers_jp"] = list(t.get("arrangers", []))
-        t["vocalists_jp"] = list(t.get("vocalists", []))
-        t["lyricists_jp"] = list(t.get("lyricists", []))
+    if use_touhoudb and set(selected_tags) & _ARTIST_TAGS:
+        for t in wiki_tracks:
+            t["arrangers_jp"] = list(t.get("arrangers", []))
+            t["vocalists_jp"] = list(t.get("vocalists", []))
+            t["lyricists_jp"] = list(t.get("lyricists", []))
 
     # Romanize credit names via the staff name mapping
-    if fetch_credits and staff_name_map and wiki_tracks:
+    if (fetch_credits and staff_name_map and wiki_tracks
+            and set(selected_tags) & _CREDIT_TAGS):
         for t in wiki_tracks:
             t["arrangers"] = _romanize_credit_names(
                 t["arrangers"], staff_name_map)
@@ -1260,7 +1334,7 @@ def fetch_album_plan(
     # Fill in missing original titles for variant tracks (instrumental,
     # piano version, off-vocal, etc.) by copying from another variant
     # of the same song that has the data.
-    if wiki_tracks:
+    if wiki_tracks and "grouping" in selected_tags:
         wiki_tracks = _inherit_instrumental_titles(wiki_tracks)
 
     # Translate any Japanese/mixed theme names to English.
@@ -1269,7 +1343,7 @@ def fetch_album_plan(
     # unavailable) also preserves the original Japanese text.
     # Titles already in English won't match the mapping and are
     # left unchanged.
-    if wiki_tracks:
+    if wiki_tracks and "grouping" in selected_tags:
         mapping_data = load_theme_mapping(mapping_path)
         if mapping_data:
             print(f"  Loaded theme mapping "
@@ -1470,6 +1544,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
     fetch_credits        = plan.fetch_credits
     use_touhoudb         = plan.use_touhoudb
     touhoudb_add_missing = plan.touhoudb_add_missing
+    selected_tags        = frozenset(_effective_selected_tags(plan.selected_tags))
     wiki_tracks          = plan.wiki_tracks
     source_used          = plan.source_used
     album_info           = plan.album_info
@@ -1610,8 +1685,10 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
     # so the GUI can show a per-track diff view.
     tag_changes: list[dict] = []
 
-    do_romanize = romanize and ROMANIZER_AVAILABLE
-    if romanize and not ROMANIZER_AVAILABLE:
+    do_romanize = (
+        romanize and "titlesort" in selected_tags and ROMANIZER_AVAILABLE
+    )
+    if romanize and "titlesort" in selected_tags and not ROMANIZER_AVAILABLE:
         if not ROMANIZER_IMPORT_OK:
             print("  (Romanisation disabled: japanese_romanizer module "
                   "not importable.)")
@@ -1631,7 +1708,9 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
             print(f"\n── Disc {current_disc} ──")
 
         # --- Grouping write (existing behaviour) ---
-        if wiki_track is None:
+        if "grouping" not in selected_tags:
+            pass
+        elif wiki_track is None:
             print(f"  [NO MATCH]  {fname}")
             skipped += 1
         elif not wiki_track["original_titles"]:
@@ -1711,7 +1790,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
                 ("date",          album_date),
                 ("year",          album_year),
             ):
-                if not meta_val:
+                if meta_tag not in selected_tags or not meta_val:
                     continue
                 existing = _get_existing_tag(fpath, meta_tag)
                 if existing:
@@ -1740,7 +1819,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
             # multi-value fields (one genre= per genre on FLAC/OGG/Opus)
             # via set_genres — it can't share the _set_tag loop above.
             wiki_genres = album_info.get("genres") or []
-            if wiki_genres:
+            if "genre" in selected_tags and wiki_genres:
                 existing_genres = read_genres(fpath)
                 merged = _merge_genres(existing_genres, wiki_genres)
                 if merged == existing_genres:
@@ -1770,7 +1849,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
 
             # --- Album title: always overwrite on mismatch ---
             new_album = album_info.get("album")
-            if new_album:
+            if "album" in selected_tags and new_album:
                 existing = _get_existing_tag(fpath, "album")
                 if existing == new_album:
                     meta_skipped += 1
@@ -1823,12 +1902,22 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
             # The sort value is written only when it is Latin AND differs from
             # the (effective) `albumartist`, so the field is never a duplicate
             # of the display name nor a second CJK copy.
+            wants_albumartist = "albumartist" in selected_tags
+            wants_albumartistsort = "albumartistsort" in selected_tags
             raw_artists = album_info.get("album_artists") or []
-            existing_aa = _get_existing_tag(fpath, "albumartist")
-            existing_aas = _get_existing_tag(fpath, "albumartistsort")
+            existing_aa = (
+                _get_existing_tag(fpath, "albumartist")
+                if wants_albumartist or wants_albumartistsort else None
+            )
+            existing_aas = (
+                _get_existing_tag(fpath, "albumartistsort")
+                if wants_albumartistsort else None
+            )
 
             # 1. CJK display value for `albumartist`.
-            if raw_artists:
+            if not wants_albumartist:
+                new_aa = None
+            elif raw_artists:
                 new_aa = " & ".join(raw_artists)
             elif existing_aa and not _is_latin_script(existing_aa):
                 new_aa = existing_aa
@@ -1837,7 +1926,9 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
 
             # 2. Romanised value for `albumartistsort` (most authoritative
             #    first); an existing Latin value wins over a fresh resolve.
-            if existing_aas and _is_latin_script(existing_aas):
+            if not wants_albumartistsort:
+                new_aas = None
+            elif existing_aas and _is_latin_script(existing_aas):
                 new_aas = existing_aas
             elif existing_aa and _is_latin_script(existing_aa):
                 new_aas = existing_aa
@@ -1856,7 +1947,8 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
                 new_aas = None
 
             # --- Write `albumartist` (CJK display) ---
-            if new_aa is not None and new_aa != existing_aa:
+            if (wants_albumartist
+                    and new_aa is not None and new_aa != existing_aa):
                 try:
                     _set_tag(fpath, "albumartist", new_aa, dry_run=dry_run)
                     if existing_aa:
@@ -1874,12 +1966,13 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
                 except Exception as exc:
                     print(f"  [META-ERR]  {fname}  albumartist: {exc}")
                     errors += 1
-            elif new_aa is not None:
+            elif wants_albumartist and new_aa is not None:
                 # Computed value equals what's already there.
                 meta_skipped += 1
 
             # --- Write `albumartistsort` (romanised) ---
-            if new_aas is not None and new_aas != existing_aas:
+            if (wants_albumartistsort
+                    and new_aas is not None and new_aas != existing_aas):
                 try:
                     _set_tag(fpath, "albumartistsort", new_aas,
                              dry_run=dry_run)
@@ -1899,7 +1992,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
                     print(f"  [META-ERR]  {fname}  "
                           f"albumartistsort: {exc}")
                     errors += 1
-            elif new_aas is not None:
+            elif wants_albumartistsort and new_aas is not None:
                 # Computed value equals what's already there.
                 meta_skipped += 1
 
@@ -1910,7 +2003,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
                 ("vocalist",  wiki_track.get("vocalists", [])),
                 ("lyricist",  wiki_track.get("lyricists", [])),
             ):
-                if not cred_list:
+                if cred_tag not in selected_tags or not cred_list:
                     continue
                 existing = _get_existing_tag(fpath, cred_tag)
                 if existing:
@@ -1941,7 +2034,8 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
         # per track).  Both tags follow skip-if-present so hand-set values
         # are never clobbered; `artistsort` additionally won't be written if
         # the romanised join still contains CJK (incomplete romanisation).
-        if use_touhoudb and wiki_track is not None:
+        if (use_touhoudb and wiki_track is not None
+                and selected_tags & _ARTIST_TAGS):
             names_jp: list[str] = []
             for n in (wiki_track.get("arrangers_jp", [])
                       + wiki_track.get("vocalists_jp", [])):
@@ -1965,7 +2059,9 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
 
             if names_jp:
                 # artist (original names)
-                if _get_existing_tag(fpath, "artist"):
+                if "artist" not in selected_tags:
+                    pass
+                elif _get_existing_tag(fpath, "artist"):
                     artist_skipped += 1
                 else:
                     artist_val = "; ".join(names_jp)
@@ -1985,7 +2081,9 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
 
                 # artistsort (romanised)
                 sort_val = "; ".join(resolve_roman(n) for n in names_jp)
-                if not _is_latin_script(sort_val):
+                if "artistsort" not in selected_tags:
+                    pass
+                elif not _is_latin_script(sort_val):
                     # incomplete romanisation — don't write CJK to a sort
                     artist_skipped += 1
                 elif _get_existing_tag(fpath, "artistsort"):
@@ -2068,15 +2166,16 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
         f"Skipped: {skipped}  |  "
         f"Errors: {errors}"
     )
-    if fetch_metadata and any(album_info.get(k) for k in
-                              ("catalog_numbers", "date",
-                               "album", "album_artists")):
+    if fetch_metadata and selected_tags & _METADATA_TAGS and any(
+            album_info.get(k) for k in (
+                "catalog_numbers", "date", "album", "album_artists", "genres"
+            )):
         m_action = "Would write" if dry_run else "Wrote"
         summary_line += (
             f"  ||  {m_action} metadata: {meta_wrote} new, "
             f"{meta_skipped} skipped"
         )
-    if fetch_credits:
+    if fetch_credits and selected_tags & _CREDIT_TAGS:
         c_action = "Would write" if dry_run else "Wrote"
         summary_line += (
             f"  ||  {c_action} credits: {cred_wrote} new, "
@@ -2089,7 +2188,8 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
             f"{romanized} new, {overwritten} overwritten  |  "
             f"RM-skipped: {rm_skipped}  |  RM-errors: {rm_errors}"
         )
-    if use_touhoudb and (artist_wrote or artist_skipped):
+    if (use_touhoudb and selected_tags & _ARTIST_TAGS
+            and (artist_wrote or artist_skipped)):
         a_action = "Would write" if dry_run else "Wrote"
         summary_line += (
             f"  ||  {a_action} artist: {artist_wrote} new, "
@@ -2158,6 +2258,7 @@ def process_album(
     fetch_credits: bool = True,
     use_touhoudb: bool = False,
     touhoudb_add_missing: bool = False,
+    selected_tags=None,
     retry_case_variants: bool = False,
     on_confirm=None,
 ) -> dict:
@@ -2184,6 +2285,7 @@ def process_album(
         romanize=romanize, force_titlesort=force_titlesort,
         fetch_metadata=fetch_metadata, fetch_credits=fetch_credits,
         use_touhoudb=use_touhoudb, touhoudb_add_missing=touhoudb_add_missing,
+        selected_tags=selected_tags,
         retry_case_variants=retry_case_variants,
     )
     return tag_album_from_plan(plan, on_confirm=on_confirm)
@@ -2201,6 +2303,7 @@ def process_albums(
     fetch_credits: bool = True,
     use_touhoudb: bool = False,
     touhoudb_add_missing: bool = False,
+    selected_tags=None,
     validate_cookie: bool = True,
     on_result=None,
     on_plan=None,
@@ -2248,6 +2351,7 @@ def process_albums(
         romanize=romanize, force_titlesort=force_titlesort,
         fetch_metadata=fetch_metadata, fetch_credits=fetch_credits,
         use_touhoudb=use_touhoudb, touhoudb_add_missing=touhoudb_add_missing,
+        selected_tags=selected_tags,
     )
 
     def _cancelled() -> bool:

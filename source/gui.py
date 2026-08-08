@@ -59,6 +59,7 @@ import album_overrides
 import external_tools
 import preferences
 import config_backup
+from tag_selection import WIKI_TAGS, WIKI_TAG_LABELS, format_tag_selection
 
 # Optional helper that pulls the live THBWiki cookie from a local browser so it
 # doesn't have to be pasted by hand.  Soft import: absent => manual paste only.
@@ -491,6 +492,7 @@ def gui_main() -> None:
             fetch_credits: bool = True,
             use_touhoudb: bool = False,
             touhoudb_add_missing: bool = False,
+            selected_tags: tuple[str, ...] = WIKI_TAGS,
         ) -> None:
             super().__init__()
             self._jobs            = jobs
@@ -503,6 +505,7 @@ def gui_main() -> None:
             self._fetch_credits   = fetch_credits
             self._use_touhoudb        = use_touhoudb
             self._touhoudb_add_missing = touhoudb_add_missing
+            self._selected_tags       = selected_tags
             # Set by the GUI thread when the user clicks Cancel; read
             # between albums so the in-progress album finishes cleanly
             # before the loop exits.  A bare bool is fine here — the GIL
@@ -572,6 +575,7 @@ def gui_main() -> None:
                         fetch_credits=self._fetch_credits,
                         use_touhoudb=self._use_touhoudb,
                         touhoudb_add_missing=self._touhoudb_add_missing,
+                        selected_tags=self._selected_tags,
                         on_result=lambda r: self.album_done.emit(r),
                         on_plan=lambda idx, plan: self.fetch_progress.emit(
                             idx, plan.error is None,
@@ -745,6 +749,10 @@ def gui_main() -> None:
             self._results: list[dict] = []
             self._jobs: list[tuple[str, str, bool]] = []
             self._suppress_slug_persistence = False
+            self._active_wiki_tags: set[str] = set(
+                preferences.wiki_tag_selection()
+            )
+            self._syncing_tag_selection = False
             # Known English theme names, loaded lazily the first time an album
             # is marked unavailable (so the artist auto-mark can tell which of
             # an artist's albums already carry a theme).  None until then.
@@ -957,7 +965,7 @@ def gui_main() -> None:
                     "characters."
                 )
                 self._romanize_cb.toggled.connect(
-                    self._sync_romanize_ui
+                    self._on_romanize_toggled
                 )
                 sidebar_layout.addWidget(self._romanize_cb)
             else:
@@ -1096,7 +1104,7 @@ def gui_main() -> None:
             # match the auto-romanise checkbox's initial value.  Must
             # happen after both widgets exist.
             if ROMANIZER_AVAILABLE:
-                self._sync_romanize_ui(self._romanize_cb.isChecked())
+                self._sync_titlesort_selection_ui()
 
             # --- Wire both panes into the splitter ----------------
             # The main pane absorbs all extra horizontal space when
@@ -1163,6 +1171,32 @@ def gui_main() -> None:
             self._start_tagging()
 
         # --- UI sync ---
+        def _selected_wiki_tags(self) -> tuple[str, ...]:
+            """Return the active tag selection in its stable display order."""
+            return tuple(tag for tag in WIKI_TAGS if tag in self._active_wiki_tags)
+
+        def _on_romanize_toggled(self, on: bool) -> None:
+            """Keep the session's titlesort selection mirrored with its toggle."""
+            if not self._syncing_tag_selection:
+                if on:
+                    self._active_wiki_tags.add("titlesort")
+                else:
+                    self._active_wiki_tags.discard("titlesort")
+            self._sync_romanize_ui(on)
+
+        def _sync_titlesort_selection_ui(self) -> None:
+            """Apply the selected titlesort state to Auto-romanise titles."""
+            if self._romanize_cb is None:
+                return
+            selected = "titlesort" in self._active_wiki_tags
+            self._syncing_tag_selection = True
+            try:
+                self._romanize_cb.setEnabled(selected)
+                self._romanize_cb.setChecked(selected)
+            finally:
+                self._syncing_tag_selection = False
+            self._sync_romanize_ui(selected)
+
         def _sync_romanize_ui(self, on: bool) -> None:
             if self._force_ts_cb is not None:
                 self._force_ts_cb.setEnabled(on)
@@ -1171,6 +1205,76 @@ def gui_main() -> None:
             # "Add missing members" is only meaningful when TouhouDB
             # verification is enabled; grey it out otherwise.
             self._tdb_add_missing_cb.setEnabled(on)
+
+        def _open_tag_selection_dialog(self) -> None:
+            """Select the individual fields the Wiki Tagger may write."""
+            previous = set(self._active_wiki_tags)
+            dlg = QtWidgets.QDialog(self)
+            dlg.setWindowTitle("Wiki Tag Selection")
+            dlg.setModal(True)
+            layout = QtWidgets.QVBoxLayout(dlg)
+
+            intro = QtWidgets.QLabel(
+                "Choose the Wiki Tagger fields to fetch and apply. "
+                "At least one field must remain selected."
+            )
+            intro.setWordWrap(True)
+            layout.addWidget(intro)
+
+            group = QtWidgets.QGroupBox("Tags")
+            grid = QtWidgets.QGridLayout(group)
+            boxes: dict[str, QtWidgets.QCheckBox] = {}
+            for index, tag in enumerate(WIKI_TAGS):
+                box = QtWidgets.QCheckBox(
+                    f"{WIKI_TAG_LABELS[tag]}  ({tag})"
+                )
+                box.setChecked(tag in previous)
+                boxes[tag] = box
+                grid.addWidget(box, index // 2, index % 2)
+            layout.addWidget(group)
+
+            note = QtWidgets.QLabel(
+                "Selecting Artist or Artist Sort enables Verify with TouhouDB. "
+                "Title Sort and Auto-romanise titles are kept in sync."
+            )
+            note.setWordWrap(True)
+            layout.addWidget(note)
+
+            buttons = QtWidgets.QDialogButtonBox(
+                QtWidgets.QDialogButtonBox.Save
+                | QtWidgets.QDialogButtonBox.Cancel
+            )
+
+            def save_selection() -> None:
+                selected = {
+                    tag for tag, box in boxes.items() if box.isChecked()
+                }
+                if not selected:
+                    QtWidgets.QMessageBox.warning(
+                        dlg, "Tag selection", "Select at least one tag."
+                    )
+                    return
+                ordered = tuple(tag for tag in WIKI_TAGS if tag in selected)
+                data = preferences.load()
+                data["wiki_tag_selection"] = list(ordered)
+                if not preferences.save(data):
+                    QtWidgets.QMessageBox.warning(
+                        dlg, "Tag selection",
+                        "Could not save the tag selection."
+                    )
+                    return
+                self._active_wiki_tags = selected
+                self._sync_titlesort_selection_ui()
+                if ((selected - previous) & {"artist", "artistsort"}):
+                    self._touhoudb_cb.setChecked(True)
+                if selected != previous:
+                    self._append_log(format_tag_selection(ordered))
+                dlg.accept()
+
+            buttons.accepted.connect(save_selection)
+            buttons.rejected.connect(dlg.reject)
+            layout.addWidget(buttons)
+            dlg.exec_()
 
         # --- "Unavailable on the wikis" marking ---
         def _apply_unavailable_style(
@@ -2019,6 +2123,8 @@ def gui_main() -> None:
             self._esc_shortcut.setEnabled(True)
             self._was_cancelled = False
             self._log.clear()
+            selected_tags = self._selected_wiki_tags()
+            self._append_log(format_tag_selection(selected_tags))
             self._results = []
             # Stash jobs so _on_all_done's auto-clear / refresh pass
             # can match successful results back to tree rows by
@@ -2058,6 +2164,7 @@ def gui_main() -> None:
                     self._tdb_add_missing_cb.isChecked()
                     and self._touhoudb_cb.isChecked()
                 ),
+                selected_tags=selected_tags,
             )
             self._worker.log_message.connect(self._append_log)
             self._worker.album_done.connect(self._on_album_done)
@@ -4476,6 +4583,13 @@ def gui_main() -> None:
                 "Check external commands and configure executable paths"
             )
             tools_act.triggered.connect(self._open_external_tools_dialog)
+            tag_selection_act = settings_menu.addAction("&Tag selection…")
+            tag_selection_act.setToolTip(
+                "Choose which Wiki Tagger fields are fetched and applied"
+            )
+            tag_selection_act.triggered.connect(
+                wiki_tab._open_tag_selection_dialog
+            )
             settings_menu.addSeparator()
             thwiki_auth_act = settings_menu.addAction(
                 "THBWiki browser authentication…"
