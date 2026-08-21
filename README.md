@@ -239,9 +239,14 @@ absent from the cache are not examined.
 
 See [CHANGELOG](CHANGELOG.md).
 
-## Contribution
+## Development model
 
-See [CONTRIBUTING](CONTRIBUTING.md).
+This is a solo-maintained project. `magazine0410` is the sole developer and
+maintainer. External code contributions and pull requests are not accepted
+unless specifically invited. Please use GitHub Issues for bug reports,
+feature requests, questions, and suggestions.
+
+See [CONTRIBUTING](CONTRIBUTING.md) for issue guidance.
 
 ## License
 
