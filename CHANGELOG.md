@@ -22,9 +22,11 @@ Removed, or Security; do not use this file as a commit-by-commit log.
   `vocalist`, and `lyricist` tags already written with the artist's circle.
   It re-fetches each album from THBWiki rather than reversing the faulty
   mapping, which is not invertible. Dry run by default, checkpointed per
-  album so an expired THBWiki session can be resumed, and it rewrites a tag
-  only when the tag both disagrees with the wiki and matches the old bug's
-  output exactly.
+  album so an expired THBWiki session can be resumed. It rewrites a tag only
+  when the tag both disagrees with the wiki and matches the old bug's output
+  exactly. On an expiry the run pauses for the session to be re-verified and
+  retries the same album, so one invocation can span several sessions;
+  `--no-wait` stops instead, as does any run without a terminal on stdin.
 
 ### Changed
 

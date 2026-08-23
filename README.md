@@ -269,11 +269,28 @@ since TouhouDB allows one request per second.
 python source/retag_credits.py --romanize "path/to/music-library"
 ```
 
-Every album is checkpointed as it finishes, because THBWiki's session expires
-after a few minutes of fetching and ends the batch. Re-run the same command
-to resume; finished albums are not fetched again. A dry-run checkpoint does not
-count as done for a later `--apply` run, so previewing the whole library
-first does not cause the real run to skip it. Use `--limit N` to work
+THBWiki's session expires after a few minutes of fetching, which a whole
+library outlives many times over. The run handles that in two ways. Every
+album is checkpointed as it finishes, so re-running the same command resumes
+and finished albums are not fetched again. And rather than ending on an
+expiry, the run pauses:
+
+```
+⚠ The THBWiki session expired.
+  Open THBWiki in your browser and pass the "verify you are human" check,
+  then press Enter to carry on with 'NEXTRA [M3-24]' (2 album(s) left).
+  Press q then Enter, or Ctrl-C, to stop and resume later.
+```
+
+Re-verify in the browser, press Enter, and it retries the same album and
+carries on — so one invocation can cover the whole library across several
+sessions. Pass `--no-wait` to stop on expiry instead; that is also the
+automatic behaviour when stdin is not a terminal, so unattended runs never
+hang on the prompt. Either way the album that was interrupted is not
+checkpointed, so it is retried rather than skipped.
+
+A dry-run checkpoint does not count as done for a later `--apply` run, so
+previewing the whole library first does not cause the real run to skip it. Use `--limit N` to work
 through a large library in sessions, `--reviewed-only` to skip albums whose
 wiki slug would have to be guessed from the folder name, and `--reset` to
 start over.

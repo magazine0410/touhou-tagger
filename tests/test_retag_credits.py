@@ -3,6 +3,7 @@
 The decision logic is pure, so it is tested directly: a credit is repaired
 only when it is exactly what the faulty circle mapping would have produced.
 """
+import io
 import json
 import os
 import tempfile
@@ -124,13 +125,14 @@ class ResumeTests(unittest.TestCase):
             d.mkdir()
             (d / "track.flac").touch()
 
-    def run_batch(self, side_effect):
+    def run_batch(self, side_effect, no_wait=False):
         with patch.object(retag_credits, "process_album",
                           side_effect=side_effect), \
              patch.object(retag_credits, "reviewed_slugs", return_value={}):
             return retag_credits.run(
                 [self.tmp.name], apply=False, limit=None, delay=0,
-                reviewed_only=False, state_file=self.state, verbose=False)
+                reviewed_only=False, state_file=self.state, verbose=False,
+                no_wait=no_wait)
 
     def test_cookie_error_stops_the_batch_and_checkpoints_the_rest(self):
         calls = []
@@ -191,6 +193,79 @@ class ResumeTests(unittest.TestCase):
 
         batch(apply=True)                   # and only then is it done
         self.assertEqual(seen, [])
+
+    def test_no_wait_stops_on_an_expired_session(self):
+        calls = []
+
+        def side_effect(album_dir, **kwargs):
+            calls.append(album_dir)
+            raise ThwikiCookieError("cookie expired")
+
+        with patch.object(retag_credits, "can_wait", return_value=False), \
+             patch.object(retag_credits, "wait_for_new_cookie") as prompt:
+            summary = self.run_batch(side_effect, no_wait=True)
+        prompt.assert_not_called()
+        self.assertEqual(len(calls), 1)         # stopped on the first album
+        self.assertIn("cookie expired", summary["stopped"])
+
+    def test_waiting_retries_the_same_album_and_carries_on(self):
+        calls = []
+
+        def side_effect(album_dir, **kwargs):
+            calls.append(album_dir)
+            # The first album fails once, then succeeds on the retry.
+            if len(calls) == 1:
+                raise ThwikiCookieError("cookie expired")
+            return {"result": "checked", "repaired": 0}
+
+        with patch.object(retag_credits, "can_wait", return_value=True), \
+             patch.object(retag_credits, "wait_for_new_cookie",
+                          return_value=True) as prompt:
+            summary = self.run_batch(side_effect)
+
+        prompt.assert_called_once()
+        # album A (fails), album A again (succeeds), album B.
+        self.assertEqual(calls, [calls[0], calls[0], calls[2]])
+        self.assertIsNone(summary["stopped"])
+        self.assertEqual(summary["totals"]["checked"], 2)
+
+    def test_declining_the_prompt_stops_without_consuming_the_album(self):
+        calls = []
+
+        def side_effect(album_dir, **kwargs):
+            calls.append(album_dir)
+            raise ThwikiCookieError("cookie expired")
+
+        with patch.object(retag_credits, "can_wait", return_value=True), \
+             patch.object(retag_credits, "wait_for_new_cookie",
+                          return_value=False):
+            summary = self.run_batch(side_effect)
+
+        self.assertEqual(summary["stopped"], "stopped at the session prompt")
+        # Nothing completed, so the album is still pending on the next run.
+        # (The checkpoint file may not even exist yet — load_state copes.)
+        self.assertEqual(retag_credits.load_state(self.state)["done"], {})
+
+    def test_repeated_expiries_on_one_album_give_up(self):
+        calls = []
+
+        def side_effect(album_dir, **kwargs):
+            calls.append(album_dir)
+            raise ThwikiCookieError("cookie expired")
+
+        with patch.object(retag_credits, "can_wait", return_value=True), \
+             patch.object(retag_credits, "wait_for_new_cookie",
+                          return_value=True):
+            summary = self.run_batch(side_effect)
+
+        # Bounded, so an always-failing session cannot loop forever.
+        self.assertEqual(len(calls), retag_credits._MAX_CONSECUTIVE_EXPIRIES)
+        self.assertIn("times in a row", summary["stopped"])
+
+    def test_a_pipe_never_waits(self):
+        # Without a terminal the prompt would block forever.
+        with patch.object(retag_credits.sys, "stdin", io.StringIO()):
+            self.assertFalse(retag_credits.can_wait(False))
 
     def test_one_album_error_does_not_stop_the_batch(self):
         def side_effect(album_dir, **kwargs):

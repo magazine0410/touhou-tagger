@@ -27,14 +27,19 @@ Anything else is left untouched: a hand-edited credit, a credit that came
 with the rip, an empty field (this tool repairs, it never fills), and a
 circle name that the wiki itself credits.
 
-Every album's outcome is checkpointed as it completes, because THBWiki's
-session expires after a few minutes of fetching and takes the batch with it.
-Re-run the same command to resume; finished albums are not re-fetched.
+THBWiki's session expires after a few minutes of fetching, which a whole
+library outlives many times over.  Two mechanisms cover that.  Every album's
+outcome is checkpointed as it completes, so re-running the same command
+resumes and finished albums are not re-fetched.  And by default the run does
+not end there: it pauses, waits for the challenge to be solved again, and
+retries the same album, so one invocation can span several sessions.  Pass
+``--no-wait`` (or run without a terminal) to stop instead.
 
 Examples:
     python source/retag_credits.py "path/to/music-library"
     python source/retag_credits.py --apply "path/to/music-library"
     python source/retag_credits.py --apply --limit 50 "path/to/library"
+    python source/retag_credits.py --no-wait "path/to/library"
     python source/retag_credits.py --reset "path/to/music-library"
 """
 from __future__ import annotations
@@ -54,6 +59,10 @@ from file_scan import (
     scan_music_files,
 )
 from tag_io import _get_existing_tag, _is_latin_script, _set_tag
+try:                                  # optional, like thwiki.py's own import
+    import browser_cookie as _browser_cookie
+except Exception:                     # noqa: BLE001
+    _browser_cookie = None
 from thwiki import (
     ThwikiCookieError,
     _fetch_thwiki_page_html,
@@ -164,6 +173,56 @@ def romanize_names(names: list[str], client) -> list[str]:
             roman = None
         out.append(roman if roman and _is_latin_script(roman) else name)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Expired-session pause
+# ---------------------------------------------------------------------------
+# A whole-library migration outlives several THBWiki sessions.  Exiting on each
+# expiry is safe (the checkpoint resumes) but costs a restart and a re-walk of
+# the library per session, so by default the run pauses and waits for the
+# challenge to be solved again.  Refuse to wait where nobody can answer:
+# without a terminal on stdin the prompt would block forever.
+_MAX_CONSECUTIVE_EXPIRIES = 5
+
+
+def can_wait(no_wait: bool) -> bool:
+    """True when the run may pause for a human to re-verify the session."""
+    if no_wait:
+        return False
+    try:
+        return sys.stdin.isatty()
+    except Exception:                                 # noqa: BLE001
+        return False
+
+
+def wait_for_new_cookie(album_name: str, remaining: int) -> bool:
+    """Ask for a re-verified THBWiki session.  True to retry, False to stop.
+
+    Re-pulls the cookie from the browser afterwards so the retry uses the new
+    session rather than the value cached moments ago.
+    """
+    print()
+    print("  ⚠ The THBWiki session expired.")
+    print(f"    Open THBWiki in your browser and pass the "
+          f"\"verify you are human\" check, then press Enter to carry on "
+          f"with {album_name!r} ({remaining:,} album(s) left).")
+    print("    Press q then Enter, or Ctrl-C, to stop and resume later.")
+    try:
+        answer = input("    > ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    if answer.startswith("q"):
+        return False
+    if _browser_cookie is not None:
+        # Bypass the helper's short TTL cache; the whole point is that the
+        # cookie changed while we were waiting.
+        try:
+            _browser_cookie.refresh_env(force=True, announce=True)
+        except Exception:                             # noqa: BLE001
+            pass
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -374,8 +433,15 @@ def run(
     verbose: bool,
     tdb_client=None,
     name_cache_file: str | None = None,
+    no_wait: bool = False,
 ) -> dict:
-    """Walk every album under *paths*, checkpointing after each one."""
+    """Walk every album under *paths*, checkpointing after each one.
+
+    On an expired THBWiki session the run pauses for the challenge to be
+    solved again and retries the same album, so one invocation can span
+    several sessions.  ``no_wait`` (and any run without a terminal) stops
+    instead, leaving the checkpoint to resume from.
+    """
     state = load_state(state_file)
     done = state["done"]
     overrides = reviewed_slugs()
@@ -401,6 +467,12 @@ def run(
         print("Dry run — no tags will be written.  Add --apply to write.")
     print()
 
+    waiting = can_wait(no_wait)
+    if waiting:
+        print("On an expired THBWiki session this run will pause and wait "
+              "for you to re-verify, rather than stopping.")
+        print()
+
     totals: Counter = Counter()
     stopped = None
 
@@ -415,17 +487,39 @@ def run(
                 continue
             slug = guess_album_slug(album_dir)
 
-        try:
-            result = process_album(album_dir, slug=slug, apply=apply,
-                                   verbose=verbose, tdb_client=tdb_client)
-        except ThwikiCookieError as exc:
-            stopped = str(exc)
+        # Retry the *same* album after a pause: the expiry means it was never
+        # fetched, so it must not be skipped or checkpointed.
+        expiries = 0
+        while True:
+            try:
+                result = process_album(album_dir, slug=slug, apply=apply,
+                                       verbose=verbose, tdb_client=tdb_client)
+                break
+            except ThwikiCookieError as exc:
+                expiries += 1
+                if not waiting:
+                    stopped = str(exc)
+                elif expiries >= _MAX_CONSECUTIVE_EXPIRIES:
+                    stopped = (f"the session expired "
+                               f"{_MAX_CONSECUTIVE_EXPIRIES} times in a row "
+                               f"on this album — {exc}")
+                elif wait_for_new_cookie(os.path.basename(album_dir),
+                                         len(pending) - index + 1):
+                    continue
+                else:
+                    stopped = "stopped at the session prompt"
+                result = None
+                break
+            except KeyboardInterrupt:
+                stopped = "interrupted"
+                result = None
+                break
+            except Exception as exc:                  # noqa: BLE001
+                result = {"result": f"error: {type(exc).__name__}",
+                          "repaired": 0}
+                break
+        if result is None:
             break
-        except KeyboardInterrupt:
-            stopped = "interrupted"
-            break
-        except Exception as exc:                      # noqa: BLE001
-            result = {"result": f"error: {type(exc).__name__}", "repaired": 0}
 
         # Checkpoint immediately: the session can die on the next album.
         result["applied"] = apply
@@ -482,8 +576,9 @@ def print_summary(summary: dict, *, apply: bool, state_file: str) -> None:
 
     if summary["stopped"]:
         print(f"\n⚠ Stopped early: {summary['stopped']}")
-        print("  Finished albums are checkpointed. Pass the challenge again "
-              "in your browser, then re-run the same command to resume.")
+        print("  Finished albums are checkpointed, and the album that was "
+              "interrupted is not among them. Pass the challenge again in "
+              "your browser, then re-run the same command to resume.")
         print(f"  Checkpoint: {state_file}")
 
 
@@ -516,6 +611,13 @@ def main(argv: list[str] | None = None) -> int:
              "name, using TouhouDB's official romanization. This is a "
              "naming-policy change, not a bug fix: it touches albums the "
              "circle bug never damaged. Dry-run it on its own first.",
+    )
+    parser.add_argument(
+        "--no-wait", action="store_true",
+        help="Stop when the THBWiki session expires instead of pausing for "
+             "you to re-verify it. The checkpoint still resumes on the next "
+             "run. Implied when stdin is not a terminal, so unattended runs "
+             "never hang on the prompt.",
     )
     parser.add_argument(
         "--reviewed-only", action="store_true",
@@ -562,7 +664,7 @@ def main(argv: list[str] | None = None) -> int:
         args.paths, apply=args.apply, limit=args.limit, delay=args.delay,
         reviewed_only=args.reviewed_only, state_file=state_file,
         verbose=args.verbose, tdb_client=tdb_client,
-        name_cache_file=cache_file,
+        name_cache_file=cache_file, no_wait=args.no_wait,
     )
     print_summary(summary, apply=args.apply, state_file=state_file)
     return 1 if summary["totals"]["errors"] else 0
