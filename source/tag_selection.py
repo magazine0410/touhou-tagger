@@ -27,6 +27,11 @@ WIKI_TAGS: tuple[str, ...] = (
 )
 WIKI_TAG_SET = frozenset(WIKI_TAGS)
 
+# The per-track staff credits.  Grouped here because both the tagger's
+# write policy and the GUI's "Force overwrite staff tags" toggle need the
+# same set, and a second copy would drift.
+STAFF_TAGS = frozenset({"arranger", "vocalist", "lyricist"})
+
 WIKI_TAG_LABELS: dict[str, str] = {
     "grouping": "Grouping",
     "album": "Album",

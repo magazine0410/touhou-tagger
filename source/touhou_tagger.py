@@ -80,7 +80,11 @@ from theme_mapping import (
     normalize,
 )
 from file_scan import scan_music_files
-from tag_selection import WIKI_TAGS, normalize_selected_tags
+from tag_selection import (
+    STAFF_TAGS as _CREDIT_TAGS,
+    WIKI_TAGS,
+    normalize_selected_tags,
+)
 
 # Optional: companion romaniser module.  When present, this script can
 # auto-fill the `titlesort` tag with a Hepburn romanisation of any
@@ -747,7 +751,6 @@ _METADATA_TAGS = frozenset({
     "album", "albumartist", "albumartistsort", "catalognumber", "date",
     "year", "genre",
 })
-_CREDIT_TAGS = frozenset({"arranger", "vocalist", "lyricist"})
 _ARTIST_TAGS = frozenset({"artist", "artistsort"})
 
 
@@ -887,6 +890,7 @@ class AlbumPlan:
     dry_run: bool
     romanize: bool
     force_titlesort: bool
+    force_credits: bool
     fetch_metadata: bool
     fetch_credits: bool
     use_touhoudb: bool
@@ -935,6 +939,49 @@ def _warn_english_wiki_unavailable() -> None:
     )
 
 
+def _build_credit_romanization_map(
+    wiki_tracks: list[dict],
+    tdb_client,
+    staff_name_map: dict[str, str],
+) -> dict[str, str]:
+    """Romanize every CJK name credited on an album, once per unique name.
+
+    Applies the tagger's documented resolver priority — TouhouDB's official
+    name, then the THBWiki Staff map, then nothing — and returns only the
+    names that actually resolved, so ``_romanize_credit_names`` leaves the
+    rest untouched.
+
+    TouhouDB is consulted only when the run enabled it (``tdb_client`` is
+    ``None`` otherwise); it is rate-limited to one request per second and
+    caches per name, which is why this collects the album's unique names
+    first instead of querying per track.  Latin-script names never reach a
+    query — ``romanize()`` returns them unchanged.
+    """
+    names: list[str] = []
+    seen: set[str] = set()
+    for t in wiki_tracks:
+        for field in ("arrangers", "vocalists", "lyricists"):
+            for name in t.get(field) or []:
+                if name and name not in seen and not _is_latin_script(name):
+                    seen.add(name)
+                    names.append(name)
+
+    resolved: dict[str, str] = {}
+    for name in names:
+        roman = None
+        if tdb_client is not None:
+            try:
+                roman = tdb_client.romanize(name)
+            except Exception as exc:                  # noqa: BLE001
+                print(f"  TouhouDB romanization failed for {name!r}: {exc}")
+                roman = None
+        if not roman:
+            roman = staff_name_map.get(name)
+        if roman and roman != name and _is_latin_script(roman):
+            resolved[name] = roman
+    return resolved
+
+
 def fetch_album_plan(
     wiki_album: str,
     music_dir: str,
@@ -944,6 +991,7 @@ def fetch_album_plan(
     mapping_path: str | None = None,
     romanize: bool = True,
     force_titlesort: bool = False,
+    force_credits: bool = False,
     fetch_metadata: bool = True,
     fetch_credits: bool = True,
     use_touhoudb: bool = False,
@@ -1000,6 +1048,7 @@ def fetch_album_plan(
         base = dict(
             wiki_album=wiki_album, music_dir=music_dir, dry_run=dry_run,
             romanize=romanize, force_titlesort=force_titlesort,
+            force_credits=force_credits,
             fetch_metadata=fetch_metadata, fetch_credits=fetch_credits,
             use_touhoudb=use_touhoudb,
             touhoudb_add_missing=touhoudb_add_missing,
@@ -1320,17 +1369,6 @@ def fetch_album_plan(
             t["vocalists_jp"] = list(t.get("vocalists", []))
             t["lyricists_jp"] = list(t.get("lyricists", []))
 
-    # Romanize credit names via the staff name mapping
-    if (fetch_credits and staff_name_map and wiki_tracks
-            and set(selected_tags) & _CREDIT_TAGS):
-        for t in wiki_tracks:
-            t["arrangers"] = _romanize_credit_names(
-                t["arrangers"], staff_name_map)
-            t["vocalists"] = _romanize_credit_names(
-                t["vocalists"], staff_name_map)
-            t["lyricists"] = _romanize_credit_names(
-                t["lyricists"], staff_name_map)
-
     # Fill in missing original titles for variant tracks (instrumental,
     # piano version, off-vocal, etc.) by copying from another variant
     # of the same song that has the data.
@@ -1490,6 +1528,23 @@ def fetch_album_plan(
             print("  No confident TouhouDB album match — "
                   "proceeding on wiki data only.")
 
+    # --- Romanize credit names -------------------------------------------
+    # Deliberately placed after the TouhouDB block: the credit tags follow
+    # the same resolver priority as the sort fields (TouhouDB official name >
+    # THBWiki Staff map > the original name), and the client only exists by
+    # this point.  The `*_jp` snapshots above already hold the original
+    # forms for the `artist` tag, so rewriting these fields is safe here.
+    if (fetch_credits and wiki_tracks
+            and set(selected_tags) & _CREDIT_TAGS):
+        credit_map = _build_credit_romanization_map(
+            wiki_tracks, tdb_client, staff_name_map)
+        if credit_map:
+            print(f"  Romanized {len(credit_map)} credit name(s) "
+                  f"(TouhouDB / Staff map)")
+            for t in wiki_tracks:
+                for field in ("arrangers", "vocalists", "lyricists"):
+                    t[field] = _romanize_credit_names(t[field], credit_map)
+
     # All network / data-prep done — package the in-memory plan for tagging.
     return _plan(
         wiki_tracks=wiki_tracks,
@@ -1544,6 +1599,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
     fetch_credits        = plan.fetch_credits
     use_touhoudb         = plan.use_touhoudb
     touhoudb_add_missing = plan.touhoudb_add_missing
+    force_credits        = plan.force_credits
     selected_tags        = frozenset(_effective_selected_tags(plan.selected_tags))
     wiki_tracks          = plan.wiki_tracks
     source_used          = plan.source_used
@@ -1998,6 +2054,13 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
 
         # --- Per-track credits (arranger, vocalist, lyricist) ---
         if fetch_credits and wiki_track is not None:
+            # Credits are skip-if-present by default.  `force_credits`
+            # ("Force overwrite staff tags") makes the wiki authoritative
+            # instead, which is what lets a re-run replace credits an earlier
+            # release wrote — including the circle names the Staff-map bug
+            # produced, and credits predating TouhouDB romanisation.  A value
+            # the wiki already agrees with is still left alone, so forcing
+            # does not churn files or fill the log with no-op writes.
             for cred_tag, cred_list in (
                 ("arranger",  wiki_track.get("arrangers", [])),
                 ("vocalist",  wiki_track.get("vocalists", [])),
@@ -2006,19 +2069,29 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
                 if cred_tag not in selected_tags or not cred_list:
                     continue
                 existing = _get_existing_tag(fpath, cred_tag)
-                if existing:
+                cred_val = "; ".join(cred_list)
+                if existing and not force_credits:
                     cred_skipped += 1
                     continue
-                cred_val = "; ".join(cred_list)
+                if existing == cred_val:
+                    # Forcing, but the wiki agrees with the file already.
+                    cred_skipped += 1
+                    continue
                 try:
                     _set_tag(fpath, cred_tag, cred_val,
                              dry_run=dry_run)
-                    print(f"  [CREDIT]    {fname}  "
-                          f"{cred_tag} = {cred_val}")
+                    if existing:
+                        print(f"  [CRED-OVR]  {fname}  "
+                              f"{cred_tag} = {cred_val}")
+                        print(f"              was: {existing}")
+                    else:
+                        print(f"  [CREDIT]    {fname}  "
+                              f"{cred_tag} = {cred_val}")
                     cred_wrote += 1
                     tag_changes.append({"filename": fname,
                                         "tag": cred_tag,
-                                        "old": None, "new": cred_val})
+                                        "old": existing or None,
+                                        "new": cred_val})
                 except Exception as exc:
                     print(f"  [CRED-ERR]  {fname}  "
                           f"{cred_tag}: {exc}")
@@ -2254,6 +2327,7 @@ def process_album(
     mapping_path: str | None = None,
     romanize: bool = True,
     force_titlesort: bool = False,
+    force_credits: bool = False,
     fetch_metadata: bool = True,
     fetch_credits: bool = True,
     use_touhoudb: bool = False,
@@ -2283,6 +2357,7 @@ def process_album(
         wiki_album, music_dir,
         dry_run=dry_run, thwiki_only=thwiki_only, mapping_path=mapping_path,
         romanize=romanize, force_titlesort=force_titlesort,
+        force_credits=force_credits,
         fetch_metadata=fetch_metadata, fetch_credits=fetch_credits,
         use_touhoudb=use_touhoudb, touhoudb_add_missing=touhoudb_add_missing,
         selected_tags=selected_tags,
@@ -2299,6 +2374,7 @@ def process_albums(
     mapping_path: str | None = None,
     romanize: bool = True,
     force_titlesort: bool = False,
+    force_credits: bool = False,
     fetch_metadata: bool = True,
     fetch_credits: bool = True,
     use_touhoudb: bool = False,
@@ -2349,6 +2425,7 @@ def process_albums(
     opts = dict(
         dry_run=dry_run, thwiki_only=thwiki_only, mapping_path=mapping_path,
         romanize=romanize, force_titlesort=force_titlesort,
+        force_credits=force_credits,
         fetch_metadata=fetch_metadata, fetch_credits=fetch_credits,
         use_touhoudb=use_touhoudb, touhoudb_add_missing=touhoudb_add_missing,
         selected_tags=selected_tags,
@@ -2492,6 +2569,17 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--force-credits",
+        action="store_true",
+        help=(
+            "Overwrite existing arranger/vocalist/lyricist tags with the "
+            "wiki's credits.  Without this flag an existing credit is "
+            "preserved, so a re-run cannot correct one written by an "
+            "earlier release.  A credit the wiki already agrees with is "
+            "left alone either way."
+        ),
+    )
+    parser.add_argument(
         "--no-metadata",
         action="store_true",
         help=(
@@ -2555,6 +2643,7 @@ def main() -> None:
             mapping_path=args.mapping,
             romanize=not args.no_romanize,
             force_titlesort=args.force_titlesort,
+            force_credits=args.force_credits,
             fetch_metadata=not args.no_metadata,
             fetch_credits=not args.no_credits,
             use_touhoudb=args.touhoudb,

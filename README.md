@@ -220,6 +220,64 @@ directory's `stats_cache.json`. It validates the modification time of every
 shortlisted file and rereads stale candidates before changing them; files
 absent from the cache are not examined.
 
+### Correcting staff tags on a re-run
+
+`arranger`, `vocalist`, and `lyricist` are preserved when the file already has
+them, so re-tagging an album cannot fix a credit written by an earlier
+release. Tick **Force overwrite staff tags** in the sidebar (or pass
+`--force-credits` on the CLI) to make the wiki authoritative for those three
+tags. A credit the wiki already agrees with is still skipped, and a role the
+wiki has no credit for is left alone — forcing overwrites, it never clears.
+
+### Repairing credit tags written with the circle name
+
+Releases before 2026-08-23 read the second column of THBWiki's Staff section
+as a romanization of the artist. That column is the artist's circle, so
+credits were written as the circle instead: `3L` became `NJK Record`,
+`Shibayan` became `ShibayanRecords`. A spot check of 30 tagged albums found
+12 of them damaged.
+
+`retag_credits.py` repairs `arranger`, `vocalist`, and `lyricist` by
+re-fetching each album from THBWiki. It cannot be done offline, and the
+mapping cannot simply be reversed — several artists collapse onto one circle,
+the mapping differs per album, and THBWiki credits some circles as the real
+arranger.
+
+```bash
+python source/retag_credits.py "path/to/music-library"
+```
+
+That is a dry run: unlike the offline `translate_*` tools, this one writes
+nothing until you add `--apply`. A tag is rewritten only when it both
+disagrees with the wiki and is exactly what the old bug would have produced.
+Hand-edited credits, credits that came with the rip, and empty fields are
+left alone — the tool repairs, it never fills.
+
+```bash
+python source/retag_credits.py --apply "path/to/music-library"
+```
+
+`--romanize` adds a second, separately-counted operation: credits that hold
+the wiki's Japanese name are rewritten with TouhouDB's official romanization
+(`アサヒ` → `Asahi`, `隣人` → `Linjin`). This is a naming-policy change rather
+than a bug fix — it touches albums the circle bug never damaged — so preview
+it on its own before combining it with `--apply`. Names TouhouDB does not
+have keep their Japanese form. Resolved names are cached between sessions,
+since TouhouDB allows one request per second.
+
+```bash
+python source/retag_credits.py --romanize "path/to/music-library"
+```
+
+Every album is checkpointed as it finishes, because THBWiki's session expires
+after a few minutes of fetching and ends the batch. Re-run the same command
+to resume; finished albums are not fetched again. A dry-run checkpoint does not
+count as done for a later `--apply` run, so previewing the whole library
+first does not cause the real run to skip it. Use `--limit N` to work
+through a large library in sessions, `--reviewed-only` to skip albums whose
+wiki slug would have to be guessed from the folder name, and `--reset` to
+start over.
+
 ## Current known limitations
 
 - Statistics treats a track as tagged only when its `grouping` exactly and case-sensitively matches a canonical theme name; hand-edited near-matches appear untagged.

@@ -224,7 +224,8 @@ _GENRE_SPLIT_RE = re.compile(r"[、，,；;/]")
 # Hiragana, Katakana, CJK ideographs (incl. ext. A), and compatibility
 # ideographs — the same coverage as tag_io's CJK detector (kept local
 # so thwiki.py stays free of project imports beyond browser_cookie).
-_GENRE_CJK_RE = re.compile(
+# Used by the genre translator and by the Staff-section name guard.
+_CJK_RE = re.compile(
     '['
     '\u3040-\u30FF'    # Hiragana + Katakana
     '\u3400-\u4DBF'    # CJK Unified Ideographs Extension A
@@ -232,6 +233,11 @@ _GENRE_CJK_RE = re.compile(
     '\uF900-\uFAFF'    # CJK Compatibility Ideographs
     ']'
 )
+
+
+# MediaWiki renders a link to a missing page with a "（页面不存在）"
+# ("page does not exist") suffix in its title= attribute.
+_REDLINK_TITLE_RE = re.compile(r"（页面不存在）\s*$")
 
 
 def split_genres(value: str) -> list[str]:
@@ -257,7 +263,7 @@ def translate_genre(name: str) -> str:
 
 def genre_is_cjk(name: str) -> bool:
     """True when *name* still contains CJK characters (untranslated)."""
-    return _GENRE_CJK_RE.search(name) is not None
+    return _CJK_RE.search(name) is not None
 
 
 # English genre values the tagger *keeps* but never fetches from the wiki as a
@@ -1219,25 +1225,65 @@ def parse_thwiki_staff_names(
     """
     Build a Japanese → romanized name mapping from THBWiki's Staff section.
 
-    The Staff section uses ``<p><b>Role</b></p>`` headers followed by
-    ``<div class="stafflist-wrapper"><table class="stafflist">`` tables.
-    Each row typically has ``[Japanese name, Romanized name, Track range]``
-    in separate ``<td>`` cells.  This function extracts the first and
-    second ``<td>`` texts as a name pair.
+    Only ``<dl><dt>Role</dt><dd>Name</dd>`` entries can supply one.  When an
+    ``<a>`` inside a ``<dd>`` is a piped link, its ``title`` holds the page
+    (Japanese/canonical) name while its visible text is the label the editor
+    chose for that credit.  A pair is kept only when the title is CJK and the
+    label is Latin, which is what a romanization looks like; the guard also
+    discards MediaWiki red-link titles ("Name（页面不存在）") and the
+    full-width/half-width punctuation variants that are not romanizations.
 
-    Also picks up names from ``<dl><dt>Role</dt><dd>Name</dd>`` entries
-    outside stafflist tables: if an ``<a>`` tag in a ``<dd>`` has a
-    ``title`` attribute that differs from its visible text, the ``title``
-    is treated as the Japanese name and the visible text as romanized.
+    The ``<div class="stafflist-wrapper"><table class="stafflist">`` rows are
+    deliberately **not** read as name pairs.  Their second column is the
+    artist's *circle* (所属社团), not a romanization — e.g. ``隣人 |
+    ZYTOKINE``, ``3L | NJK Record``, ``Shibayan | ShibayanRecords``.  Reading
+    it as a romanization replaced every credited artist with their circle,
+    which is plainly wrong on compilation albums that draw one track from
+    each of a dozen circles.  ``こたろう | Kota-rocK``, long cited as proof
+    that the column holds romanizations, is that person's circle as well.
 
-    Returns ``{japanese_name: romanized_name}`` for every name where a
-    distinct romanized form is available.  Names that are already in
-    Latin script appear in both positions and should be treated as
-    identity mappings (i.e. no translation needed).
+    Returns ``{japanese_name: romanized_name}`` — frequently empty, because
+    THBWiki album pages carry no romanization column.  Latin-script names
+    need no entry; they are already in their sort form.
     """
     name_map: dict[str, str] = {}
 
-    # --- Stafflist tables ---
+    for dd in soup.find_all("dd"):
+        for a_tag in dd.find_all("a"):
+            # A red link's title= carries a "（页面不存在）" ("page does not
+            # exist") suffix; strip it so the key is the bare name.
+            title = _REDLINK_TITLE_RE.sub("", a_tag.get("title", "")).strip()
+            visible = a_tag.get_text().strip()
+            if not title or not visible or title == visible:
+                continue
+            # A romanization runs CJK → Latin.  A piped link that fails this
+            # test points at something other than the same name in another
+            # script, so it is not a romanization.
+            if _CJK_RE.search(title) is None or _CJK_RE.search(visible):
+                continue
+            # title= often contains the page name, which may be the
+            # Japanese or canonical form
+            name_map.setdefault(title, visible)
+
+    return name_map
+
+
+def parse_thwiki_staff_circles(
+    soup: BeautifulSoup,
+) -> dict[str, str]:
+    """
+    Map each artist in the Staff section to their circle (所属社团).
+
+    This is the second column of every ``<table class="stafflist">`` row —
+    the column :func:`parse_thwiki_staff_names` deliberately refuses to read
+    as a romanization.  Rows whose circle cell is empty are omitted.
+
+    Its one consumer is ``retag_credits.py``, which needs to recognise the
+    exact value the old faulty romanization would have written for a track:
+    the wiki's credited names with this mapping applied.  Nothing in the
+    tagging path may use it to rewrite a credit.
+    """
+    circles: dict[str, str] = {}
     for wrapper in soup.find_all("div", class_="stafflist-wrapper"):
         table = wrapper.find("table", class_="stafflist")
         if not table:
@@ -1246,22 +1292,11 @@ def parse_thwiki_staff_names(
             cells = row.find_all("td")
             if len(cells) < 2:
                 continue
-            jp_name = cells[0].get_text().strip()
-            roman_name = cells[1].get_text().strip()
-            if jp_name and roman_name and jp_name != roman_name:
-                name_map[jp_name] = roman_name
-
-    # --- Definition list entries (e.g. Guitar, Mixing, etc.) ---
-    for dd in soup.find_all("dd"):
-        for a_tag in dd.find_all("a"):
-            title = a_tag.get("title", "").strip()
-            visible = a_tag.get_text().strip()
-            if title and visible and title != visible:
-                # title= often contains the page name, which may be
-                # the Japanese or canonical form
-                name_map.setdefault(title, visible)
-
-    return name_map
+            artist = cells[0].get_text().strip()
+            circle = cells[1].get_text().strip()
+            if artist and circle and artist != circle:
+                circles.setdefault(artist, circle)
+    return circles
 
 
 def parse_thwiki_album_staff(

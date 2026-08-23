@@ -104,6 +104,7 @@ class TagSelectionTests(unittest.TestCase):
             dry_run=False,
             romanize=False,
             force_titlesort=False,
+            force_credits=False,
             fetch_metadata=fetch_metadata,
             fetch_credits=False,
             use_touhoudb=False,

@@ -394,6 +394,32 @@ class TouhouDBClient:
         self._roman_cache[key] = result
         return result
 
+    # -- name-cache persistence -------------------------------------------
+    def load_name_cache(self, cache: dict) -> int:
+        """Seed the romanization cache from a previously exported dict.
+
+        Long batches (``retag_credits.py``) run across several sessions, and
+        at one request per second a cold cache re-queries every name each
+        time.  Only well-formed string keys are accepted, so a corrupted or
+        hand-edited cache file cannot inject a bogus romanization; a cached
+        ``None`` (no romanization found) is preserved as such.
+        """
+        loaded = 0
+        for key, value in (cache or {}).items():
+            if not isinstance(key, str) or not key:
+                continue
+            if value is not None and (not isinstance(value, str)
+                                      or not _is_latin_script(value)):
+                continue
+            self._roman_cache.setdefault(
+                unicodedata.normalize("NFC", key).strip(), value)
+            loaded += 1
+        return loaded
+
+    def export_name_cache(self) -> dict:
+        """Return the romanization cache for persisting between runs."""
+        return dict(self._roman_cache)
+
     # -- album lookup ------------------------------------------------------
     def find_album(
         self,

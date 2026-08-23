@@ -662,8 +662,13 @@ def _romanize_credit_names(
     """
     Apply a Japanese → romanized name mapping to a list of credit names.
 
-    Returns a new list where every name that appears as a key in
+    Returns a new list where every CJK name that appears as a key in
     ``name_map`` is replaced by its romanized value; others are kept
-    as-is.
+    as-is.  A name that is already Latin script is never replaced: a
+    romanization has nothing to add to it, and the guard stops a bad
+    mapping from rewriting a correct Latin credit.
     """
-    return [name_map.get(name, name) for name in names]
+    return [
+        name if _is_latin_script(name) else name_map.get(name, name)
+        for name in names
+    ]

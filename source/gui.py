@@ -59,7 +59,19 @@ import album_overrides
 import external_tools
 import preferences
 import config_backup
-from tag_selection import WIKI_TAGS, WIKI_TAG_LABELS, format_tag_selection
+from tag_selection import (
+    STAFF_TAGS as _STAFF_TAGS,
+    WIKI_TAGS,
+    WIKI_TAG_LABELS,
+    format_tag_selection,
+)
+
+_FORCE_CREDITS_TOOLTIP = (
+    "Replace existing 'arranger', 'vocalist', and 'lyricist' tags with "
+    "the wiki's credits.  Default is to preserve them, which means a "
+    "re-run cannot correct a credit an earlier release wrote.  A credit "
+    "the wiki already agrees with is left alone either way."
+)
 
 # Optional helper that pulls the live THBWiki cookie from a local browser so it
 # doesn't have to be pasted by hand.  Soft import: absent => manual paste only.
@@ -488,6 +500,7 @@ def gui_main() -> None:
             mapping_path: str | None,
             romanize: bool,
             force_titlesort: bool,
+            force_credits: bool,
             fetch_metadata: bool = True,
             fetch_credits: bool = True,
             use_touhoudb: bool = False,
@@ -501,6 +514,7 @@ def gui_main() -> None:
             self._mapping_path    = mapping_path
             self._romanize        = romanize
             self._force_titlesort = force_titlesort
+            self._force_credits   = force_credits
             self._fetch_metadata  = fetch_metadata
             self._fetch_credits   = fetch_credits
             self._use_touhoudb        = use_touhoudb
@@ -571,6 +585,7 @@ def gui_main() -> None:
                         mapping_path=self._mapping_path,
                         romanize=self._romanize,
                         force_titlesort=self._force_titlesort,
+                        force_credits=self._force_credits,
                         fetch_metadata=self._fetch_metadata,
                         fetch_credits=self._fetch_credits,
                         use_touhoudb=self._use_touhoudb,
@@ -995,7 +1010,14 @@ def gui_main() -> None:
                 # Sentinel so _start_tagging can read it safely
                 self._force_ts_cb = None
 
-            # 5. Skip fully-tagged on add
+            # 5. Force overwrite existing staff (credit) tags
+            self._force_credits_cb = QtWidgets.QCheckBox(
+                "Force o&verwrite staff tags"
+            )
+            self._force_credits_cb.setToolTip(_FORCE_CREDITS_TOOLTIP)
+            sidebar_layout.addWidget(self._force_credits_cb)
+
+            # 6. Skip fully-tagged on add
             self._skip_done_cb = QtWidgets.QCheckBox(
                 "Skip fully-&tagged on add"
             )
@@ -1026,7 +1048,7 @@ def gui_main() -> None:
             )
             sidebar_layout.addWidget(self._skip_genre_cb)
 
-            # 6. THBWiki only
+            # 7. THBWiki only
             self._thwiki_cb = QtWidgets.QCheckBox("TH&BWiki only")
             self._thwiki_cb.setToolTip(
                 "Skip the English wiki and use THBWiki directly"
@@ -1069,7 +1091,7 @@ def gui_main() -> None:
             _verify_sep_row.addWidget(_make_hline(), 1)
             sidebar_layout.addLayout(_verify_sep_row)
 
-            # 7. Verify with TouhouDB
+            # 8. Verify with TouhouDB
             self._touhoudb_cb = QtWidgets.QCheckBox("Verify with Touhou&DB")
             self._touhoudb_cb.setToolTip(
                 "Use TouhouDB (touhoudb.com) as a verification source: "
@@ -1081,7 +1103,7 @@ def gui_main() -> None:
             self._touhoudb_cb.toggled.connect(self._sync_touhoudb_ui)
             sidebar_layout.addWidget(self._touhoudb_cb)
 
-            # 8. Add missing TouhouDB members (depends on #7)
+            # 9. Add missing TouhouDB members (depends on #8)
             self._tdb_add_missing_cb = QtWidgets.QCheckBox(
                 "Add &missing TouhouDB members"
             )
@@ -1105,6 +1127,7 @@ def gui_main() -> None:
             # happen after both widgets exist.
             if ROMANIZER_AVAILABLE:
                 self._sync_titlesort_selection_ui()
+            self._sync_force_credits_ui()
 
             # --- Wire both panes into the splitter ----------------
             # The main pane absorbs all extra horizontal space when
@@ -1201,6 +1224,18 @@ def gui_main() -> None:
             if self._force_ts_cb is not None:
                 self._force_ts_cb.setEnabled(on)
 
+        def _sync_force_credits_ui(self) -> None:
+            """Grey out "Force overwrite staff tags" when no staff tag is
+            selected — the option has nothing to act on, since the write loop
+            skips any credit tag the selection excludes."""
+            selected = bool(self._active_wiki_tags & _STAFF_TAGS)
+            self._force_credits_cb.setEnabled(selected)
+            self._force_credits_cb.setToolTip(
+                _FORCE_CREDITS_TOOLTIP if selected else
+                _FORCE_CREDITS_TOOLTIP + "\n\nUnavailable: none of Arranger, "
+                "Vocalist, or Lyricist is in the current tag selection."
+            )
+
         def _sync_touhoudb_ui(self, on: bool) -> None:
             # "Add missing members" is only meaningful when TouhouDB
             # verification is enabled; grey it out otherwise.
@@ -1265,6 +1300,7 @@ def gui_main() -> None:
                     return
                 self._active_wiki_tags = selected
                 self._sync_titlesort_selection_ui()
+                self._sync_force_credits_ui()
                 if ((selected - previous) & {"artist", "artistsort"}):
                     self._touhoudb_cb.setChecked(True)
                 if selected != previous:
@@ -2157,6 +2193,7 @@ def gui_main() -> None:
                 mapping_path=None,
                 romanize=do_romanize,
                 force_titlesort=force_ts,
+                force_credits=self._force_credits_cb.isChecked(),
                 fetch_metadata=True,
                 fetch_credits=True,
                 use_touhoudb=self._touhoudb_cb.isChecked(),
