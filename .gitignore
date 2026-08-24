@@ -72,6 +72,13 @@ logins.json
 # Local backups of removed/archived source (kept out of the release tree)
 backup/
 
+# Local-only maintenance tools.  These are one-off migration and build CLIs
+# (credit repair, genre/grouping re-translation, the theme-mapping builder)
+# plus their tests.  Nothing in source/ imports them and the tagger runs
+# without them, so they stay out of the published tree.  Documented in
+# tools/README.md, which is ignored along with the rest of the folder.
+tools/
+
 # Local assistant/editor settings
 .claude/settings.local.json
 .codex/

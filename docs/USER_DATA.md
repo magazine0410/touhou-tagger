@@ -29,8 +29,8 @@ The directory contains:
 | `auth.json` | THBWiki browser choice, auto-pull preference, User-Agent, and `curl_cffi` impersonation profile. It never contains a browser cookie. |
 | `external_tools.json` | User-selected executable path overrides for external tools. It contains no credentials or command output. |
 | `album_overrides.json` | Reviewed Wiki Slug overrides keyed by normalized absolute album path. |
-| `retag_credits_names.json` | TouhouDB romanizations resolved by `retag_credits.py --romanize`, cached between sessions so a resumed migration does not re-query them. Public artist names only; no credentials. |
-| `retag_credits_state.json` | Per-album progress of the `retag_credits.py` credit-repair migration, so an expired THBWiki session resumes instead of restarting. It holds album paths and per-album outcomes; no credentials. Delete it, or run with `--reset`, to start the migration over. |
+| `retag_credits_names.json` | TouhouDB romanizations resolved by `retag_credits.py --romanize` (a local-only maintenance tool, not part of this repository), cached between sessions so a resumed migration does not re-query them. Public artist names only; no credentials. |
+| `retag_credits_state.json` | Per-album progress of the `retag_credits.py` credit-repair migration (a local-only maintenance tool, not part of this repository), so an expired THBWiki session resumes instead of restarting. It holds album paths and per-album outcomes; no credentials. Delete it, or run with `--reset`, to start the migration over. |
 | `preferences.json` | Non-secret folder scan depth, CUE original-handling choice, Wiki Tagger field selection, and small GUI state. |
 | `storage_locations.json` | A non-secret pointer under the platform default directory for GUI-selected config/log locations. |
 

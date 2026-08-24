@@ -49,7 +49,13 @@ touhou_tagger.py   entry point: fetch_album_plan() / tag_album_from_plan() /
                               lazy-imported only inside gui_main)
 ```
 
-`japanese_romanizer.py` (+ `japanese_romanizer_data.py`) is a standalone romaniser, soft-imported by `touhou_tagger.py` when present. `translate_genres.py` is a standalone CLI (imports only `tag_io` + `thwiki`, no network/Qt) that re-translates already-written CJK `genre` tags through `thwiki.GENRE_TRANSLATIONS` — the fast way to apply newly-added genre mappings to a library tagged before they existed, without re-fetching THBWiki. `translate_groupings.py` is the equivalent network-free migration CLI for already-written semicolon-separated `grouping` tags; it uses `touhou_theme_mapping.json`, preserves unknown/manual components, and supports dry runs. `retag_credits.py` is the **network-bound** migration CLI for `arranger`/`vocalist`/`lyricist` tags written with the artist's circle by the pre-2026-08-23 Staff-map bug; it re-fetches each album (the mapping is not invertible), is **dry-run by default** (`--apply` to write), checkpoints per album so an expired THBWiki session resumes (records are stamped with the mode, so a dry-run checkpoint never lets a later `--apply` run skip that album), pauses on an expiry to let the challenge be solved again and retries the same album rather than ending the run (`--no-wait`, and any non-TTY stdin, stops instead — the prompt would block forever), and rewrites a tag only when it both disagrees with the wiki and equals that album's circle-mapped form. Its `--romanize` flag adds the separately-counted TouhouDB romanisation pass and persists resolved names (negative results included) to `retag_credits_names.json`, because TouhouDB allows one request per second and a resumed session would otherwise re-query every name. Its `--stats-cache` mode shortlists paths from the Statistics scan cache, trusts only matching mtimes, rereads stale candidates, and deliberately excludes uncached files. `build_theme_mapping/build_theme_mapping.py` (in the `build_theme_mapping/` subdirectory, alongside its `thpatch_ja.json`/`thpatch_en.json` input dumps and reviewed `additional_theme_mappings.json`) generates `source/touhou_theme_mapping.json`. The generated JSON keeps Len'en and Seihou Project in named `sections`; `theme_mapping.load_theme_mapping()` merges them into the runtime `mapping`. Regenerate after a new Touhou game/CD release or a reviewed additional-section update.
+`japanese_romanizer.py` (+ `japanese_romanizer_data.py`) is a standalone romaniser, soft-imported by `touhou_tagger.py` when present.
+
+## Local-only tools (`tools/`)
+
+The maintenance and build CLIs below live in `tools/`, **not** in `source/`. That folder is gitignored and deliberately absent from the published repository: nothing in `source/` imports it and the tagger runs without it. Each CLI does `import _bootstrap` (`tools/_bootstrap.py`) before the tagger's modules, which puts `source/` on `sys.path` so they can keep importing `availability`/`file_scan`/`tag_io` by bare name from one directory away — keep that import first when editing them. Their tests live in `tools/tests/` with their own `_support.py` (adds both `source/` and `tools/`); CI runs `tests/` only, so run `python -m unittest discover -s tools/tests` by hand after touching a tool or a `source/` module it uses. `tools/README.md` documents them for the user, since `README.md` no longer does.
+
+`translate_genres.py` is a standalone CLI (imports only `tag_io` + `thwiki`, no network/Qt) that re-translates already-written CJK `genre` tags through `thwiki.GENRE_TRANSLATIONS` — the fast way to apply newly-added genre mappings to a library tagged before they existed, without re-fetching THBWiki. `translate_groupings.py` is the equivalent network-free migration CLI for already-written semicolon-separated `grouping` tags; it uses `touhou_theme_mapping.json`, preserves unknown/manual components, and supports dry runs. `retag_credits.py` is the **network-bound** migration CLI for `arranger`/`vocalist`/`lyricist` tags written with the artist's circle by the pre-2026-08-23 Staff-map bug; it re-fetches each album (the mapping is not invertible), is **dry-run by default** (`--apply` to write), checkpoints per album so an expired THBWiki session resumes (records are stamped with the mode, so a dry-run checkpoint never lets a later `--apply` run skip that album), pauses on an expiry to let the challenge be solved again and retries the same album rather than ending the run (`--no-wait`, and any non-TTY stdin, stops instead — the prompt would block forever), and rewrites a tag only when it both disagrees with the wiki and equals that album's circle-mapped form. Its `--romanize` flag adds the separately-counted TouhouDB romanisation pass and persists resolved names (negative results included) to `retag_credits_names.json`, because TouhouDB allows one request per second and a resumed session would otherwise re-query every name. Its `--stats-cache` mode shortlists paths from the Statistics scan cache, trusts only matching mtimes, rereads stale candidates, and deliberately excludes uncached files. `tools/build_theme_mapping/build_theme_mapping.py` (alongside its `thpatch_ja.json`/`thpatch_en.json` input dumps and reviewed `additional_theme_mappings.json`) generates `source/touhou_theme_mapping.json` — the generated JSON is published, the builder is not, so its default output path walks three directories up rather than two. The generated JSON keeps Len'en and Seihou Project in named `sections`; `theme_mapping.load_theme_mapping()` merges them into the runtime `mapping`. Regenerate after a new Touhou game/CD release or a reviewed additional-section update.
 
 ## Non-negotiable network rules
 
@@ -91,33 +97,39 @@ python source/japanese_romanizer.py "path/to/album"
 # Re-translate CJK genre tags to English in place (no Touhou-wiki dependency),
 # e.g. after adding new entries to thwiki.GENRE_TRANSLATIONS — applies them to
 # already-tagged files without re-fetching THBWiki. Idempotent; dry-run first.
-python source/translate_genres.py "path/to/music-library" --dry-run
-python source/translate_genres.py "path/to/music-library"
+python tools/translate_genres.py "path/to/music-library" --dry-run
+python tools/translate_genres.py "path/to/music-library"
 
 # Repair credit tags written with the circle instead of the artist
 # (pre-2026-08-23 Staff-map bug). Network-bound; dry run unless --apply.
 # Checkpointed per album — re-run the same command to resume after the
 # THBWiki session expires.
-python source/retag_credits.py "path/to/music-library"
-python source/retag_credits.py --apply "path/to/music-library"
+python tools/retag_credits.py "path/to/music-library"
+python tools/retag_credits.py --apply "path/to/music-library"
 # Add --romanize to also rewrite credits that merely hold the wiki's
 # Japanese name (TouhouDB romanisation). That is a naming-policy pass, not
 # a bug fix — it touches albums the bug never damaged, so dry-run it alone.
-python source/retag_credits.py --romanize "path/to/music-library"
+python tools/retag_credits.py --romanize "path/to/music-library"
 
 # Re-translate existing grouping tags after a theme-mapping correction.
 # Network-free and idempotent; dry-run first.
-python source/translate_groupings.py "path/to/music-library" --dry-run
-python source/translate_groupings.py "path/to/music-library"
+python tools/translate_groupings.py "path/to/music-library" --dry-run
+python tools/translate_groupings.py "path/to/music-library"
 # Large-library fast path after a completed Statistics scan:
-python source/translate_groupings.py --stats-cache --dry-run \
+python tools/translate_groupings.py --stats-cache --dry-run \
   "path/to/music-library"
 
 # Regenerate the theme mapping after a new game/CD release.
-# Note: the builder and its two thpatch.net JSON dumps live in the
-# build_theme_mapping/ subdirectory, not the project root.
-cd build_theme_mapping && python build_theme_mapping.py thpatch_ja.json thpatch_en.json \
-  --output ../source/touhou_theme_mapping.json
+# The builder and its two thpatch.net JSON dumps live in the local-only
+# tools/build_theme_mapping/ subdirectory. It defaults to writing
+# source/touhou_theme_mapping.json, so --output is only needed elsewhere.
+python tools/build_theme_mapping/build_theme_mapping.py \
+  tools/build_theme_mapping/thpatch_ja.json \
+  tools/build_theme_mapping/thpatch_en.json
+
+# Tests. CI runs the first line only; tools/ is not in the repository.
+python -m unittest discover -s tests
+python -m unittest discover -s tools/tests
 ```
 
 THBWiki auth (mandatory every run): with `browser_cookie3` installed the cookie is pulled from your browser automatically (default Chrome) — just keep a verified THBWiki tab open, ideally with `thwiki_keepalive.user.js` running to hold the session. Otherwise set it manually: `export THWIKI_COOKIE='...'` and `THWIKI_UA='...'`, copied from a browser that has passed the SafeLine challenge (DevTools → Network → a document request). Either way `THWIKI_UA` must match the cookie's browser (auto-pull does not fetch the UA). The GUI pulls the cookie once at startup (in `gui_main()`), and its "THBWiki Authentication…" dialog also pre-fills the Cookie box from a live browser pull on open (with a "Pull from browser" button), shows the auto-pull status, and persists only the UA/impersonate profile in the platform user-config directory documented in `docs/USER_DATA.md`.
