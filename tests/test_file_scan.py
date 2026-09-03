@@ -47,3 +47,35 @@ class FileScanTests(unittest.TestCase):
 
         self.assertEqual(found, [str(album_a), str(album_b)])
 
+
+    def test_a_file_in_a_disc_folder_resolves_to_its_album(self):
+        # Dropping one track of a multi-disc set must queue the album, not the
+        # disc folder: scanning "Disc 2" alone would renumber it as disc 1.
+        with tempfile.TemporaryDirectory() as tmp:
+            album = Path(tmp) / "Two Disc Album"
+            for disc in ("Disc 1", "CD2", "disk 3"):
+                (album / disc).mkdir(parents=True)
+            for disc in ("Disc 1", "CD2", "disk 3"):
+                track = album / disc / "01.flac"
+                track.touch()
+                self.assertEqual(
+                    file_scan.album_dir_for_file(str(track)), str(album), disc
+                )
+
+    def test_a_file_in_a_plain_album_folder_resolves_to_that_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            album = Path(tmp) / "Flat Album"
+            album.mkdir()
+            track = album / "01.flac"
+            track.touch()
+            self.assertEqual(
+                file_scan.album_dir_for_file(str(track)), str(album)
+            )
+            # A folder that merely starts with a digit is not a disc folder.
+            other = Path(tmp) / "2022 Album"
+            other.mkdir()
+            track = other / "01.flac"
+            track.touch()
+            self.assertEqual(
+                file_scan.album_dir_for_file(str(track)), str(other)
+            )

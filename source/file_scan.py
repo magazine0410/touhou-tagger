@@ -18,6 +18,24 @@ SUPPORTED_EXTENSIONS = {".mp3", ".flac", ".ogg", ".m4a", ".opus"}
 DISC_DIR_RE = re.compile(r"(?i)^(?:disc|disk|cd)\s*(\d+).*$")
 
 
+def album_dir_for_file(path: str) -> str:
+    """The album folder that owns the music file at *path*.
+
+    A file inside a ``Disc N`` subfolder belongs to the album one level up.
+    Scanning the disc folder on its own would find no disc subdirectories and
+    number every track as disc 1, so a caller resolving a dropped file by
+    ``os.path.dirname`` alone would build a second, wrongly numbered album
+    beside the real one.  Matches on :data:`DISC_DIR_RE`, the same regex
+    :func:`scan_music_files` uses, so the two cannot disagree.
+    """
+    parent = os.path.dirname(os.path.abspath(path))
+    if DISC_DIR_RE.match(os.path.basename(parent)):
+        grandparent = os.path.dirname(parent)
+        if grandparent and grandparent != parent:
+            return grandparent
+    return parent
+
+
 # ---------------------------------------------------------------------------
 # Local file scanning
 # ---------------------------------------------------------------------------

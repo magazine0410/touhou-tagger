@@ -933,12 +933,18 @@ def romanize_files(
     wiki_titles_by_key: dict[tuple[int, int], str] | None = None,
     log: callable = print,
     indent: str = "  ",
+    is_locked: callable = None,
 ) -> dict:
     """Romanise titles for a list of pre-scanned files.
 
     Logs each file's outcome via the supplied ``log`` callable so the
     output integrates with whatever stream the caller is writing to
     (stdout for CLI, the GUI's redirected print, etc.).
+
+    ``is_locked`` is an optional ``(path) -> bool`` predicate so the GUI can
+    honour the user's manual titlesort locks without this module importing the
+    configuration layer.  A locked file counts as ``skipped``; the CLI passes
+    nothing and stays lock-free.
 
     Returns a summary dict: {romanized, overwritten, skipped, errors,
     no_title, results}.  ``results`` is a list of (file_dict,
@@ -965,6 +971,13 @@ def romanize_files(
         if multi_disc and f.get("disc") != current_disc:
             current_disc = f.get("disc")
             log(f"{indent}── Disc {current_disc} ──")
+
+        if is_locked is not None and is_locked(f["path"]):
+            log(f"{indent}[LOCKED]     "
+                f"{f.get('filename', f['path'])}  "
+                f"titlesort locked by hand")
+            summary["skipped"] += 1
+            continue
 
         fb = wiki_titles_by_key.get((f.get("disc", 1), f.get("number") or -1))
         res = romanize_file(
@@ -1095,8 +1108,13 @@ def process_album_romanize(
     *,
     dry_run: bool = False,
     force_titlesort: bool = False,
+    is_locked: callable = None,
 ) -> dict:
     """Romanise every applicable track in a single album folder.
+
+    ``is_locked`` is the optional ``(path) -> bool`` predicate described on
+    :func:`romanize_files`; locked files count into ``skipped``, so the result
+    shape is identical whether or not the caller supplies one.
 
     Returns a summary dict:
         {"album": str, "tagged_dir": str,
@@ -1159,6 +1177,7 @@ def process_album_romanize(
         local_files,
         dry_run=dry_run,
         force_titlesort=force_titlesort,
+        is_locked=is_locked,
     )
 
     print("-" * 60)

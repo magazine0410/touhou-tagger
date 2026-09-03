@@ -38,6 +38,8 @@ from file_scan import (
     _format_track_label,
     _format_track_number,
     scan_music_files,
+    album_dir_for_file,
+    SUPPORTED_EXTENSIONS,
 )
 from tag_io import (
     EDITABLE_TAGS,
@@ -58,6 +60,7 @@ import availability
 import album_overrides
 import external_tools
 import preferences
+import tag_locks
 import config_backup
 from tag_selection import (
     STAFF_TAGS as _STAFF_TAGS,
@@ -666,6 +669,13 @@ def gui_main() -> None:
                             directory,
                             dry_run=self._dry_run,
                             force_titlesort=self._force_titlesort,
+                            # A titlesort the user set by hand in the Tag Edit
+                            # tab wins over the romaniser, "Force overwrite"
+                            # included.  Injected as a predicate so
+                            # japanese_romanizer stays configuration-free and
+                            # its CLI keeps working without any lock store.
+                            is_locked=lambda p: tag_locks.is_locked(
+                                p, "titlesort"),
                         )
                         self.album_done.emit(result)
                         if self._cancel_requested:
@@ -2731,6 +2741,14 @@ def gui_main() -> None:
                     f"  ||  {rm_action}: {total_r} new, "
                     f"{total_ow} overwritten  |  RM-skipped: {total_rs}"
                 )
+            total_locked = sum(
+                r.get("locked_skipped", 0) for r in self._results
+            )
+            if total_locked:
+                footer += (
+                    f"  ||  🔒 Locked: {total_locked} tag(s) left "
+                    f"untouched (see the Changes tab)"
+                )
             lines.append(footer)
             if dry and (total_t > 0 or any(
                 r.get("romanized", 0) for r in self._results
@@ -2881,6 +2899,7 @@ def gui_main() -> None:
             # build the discrepancy-filter dropdown.
             present_disc_types: OrderedDict[str, None] = OrderedDict()
             any_mismatch = False
+            any_locked = False
             for r in self._results:
                 has_changes = bool(r.get("tag_changes"))
                 has_mismatch = (r.get("date_mismatch")
@@ -2893,6 +2912,8 @@ def gui_main() -> None:
                     albums_with_changes.append(r)
                 for ch in r.get("tag_changes", []):
                     all_tag_names[ch["tag"]] = None
+                    if ch.get("locked"):
+                        any_locked = True
                 if r.get("date_mismatch"):
                     present_disc_types["Date mismatch"] = None
                 if r.get("catalog_mismatch"):
@@ -2963,9 +2984,14 @@ def gui_main() -> None:
                 disc_type_actions[_dtype] = _act
             disc_filter_btn.setMenu(disc_menu)
 
+            only_locked_cb = QtWidgets.QCheckBox("🔒 Only locked")
+            only_locked_cb.setChecked(False)
+            only_locked_cb.setVisible(any_locked)
+
             disc_row = QtWidgets.QHBoxLayout()
             disc_row.addWidget(only_disc_cb)
             disc_row.addWidget(disc_filter_btn)
+            disc_row.addWidget(only_locked_cb)
             disc_row.addStretch()
             filter_outer.addLayout(disc_row)
 
@@ -3004,6 +3030,9 @@ def gui_main() -> None:
             # Each ⚠ row carries its discrepancy-type label here so the
             # discrepancy filter can read it back (UserRole+1 is _disc_data_role).
             DISC_TYPE_ROLE = QtCore.Qt.UserRole + 2
+            # True on locked-tag change items for the filter toggle.
+            LOCKED_ROLE = QtCore.Qt.UserRole + 3
+            _LOCK_TINT_RGBA = (100, 160, 255, 45)
             track_list: list[tuple] = []   # (track_item, [change_items])
             album_list: list[tuple] = []   # (album_item, [child_items])
 
@@ -3062,13 +3091,33 @@ def gui_main() -> None:
                     tag_children: list[QtWidgets.QTreeWidgetItem] = []
 
                     for ch in file_changes:
+                        is_locked = ch.get("locked", False)
                         old_disp = ch["old"] if ch["old"] else "(none)"
-                        new_disp = ch["new"] if ch["new"] else "(cleared)"
+                        if is_locked:
+                            new_disp = (
+                                ch["new"] if ch["new"]
+                                else "(would clear)"
+                            )
+                            tag_label = f"🔒 {ch['tag']}"
+                        else:
+                            new_disp = (
+                                ch["new"] if ch["new"]
+                                else "(cleared)"
+                            )
+                            tag_label = ch["tag"]
                         change_item = QtWidgets.QTreeWidgetItem(
                             track_item,
-                            [ch["tag"], old_disp, new_disp],
+                            [tag_label, old_disp, new_disp],
                         )
-                        if ch["old"]:
+                        if is_locked:
+                            tint = QtGui.QColor(*_LOCK_TINT_RGBA)
+                            for col in range(3):
+                                change_item.setBackground(
+                                    col, QtGui.QBrush(tint),
+                                )
+                            change_item.setData(
+                                0, LOCKED_ROLE, True)
+                        elif ch["old"]:
                             highlight = QtGui.QColor(*_YELLOW_TINT_RGBA)
                             for col in range(3):
                                 change_item.setBackground(
@@ -3244,18 +3293,22 @@ def gui_main() -> None:
             # type shows only that type.
             def _apply_filters() -> None:
                 only_disc = only_disc_cb.isChecked()
-                # The per-tag checkboxes are moot in only-discrepancies mode.
+                only_locked = only_locked_cb.isChecked()
+                # The per-tag checkboxes are moot in only-discrepancies
+                # or only-locked mode.
                 for cb in tag_checkboxes.values():
-                    cb.setEnabled(not only_disc)
+                    cb.setEnabled(not only_disc and not only_locked)
                 active_tags = {name for name, cb in tag_checkboxes.items()
                                if cb.isChecked()}
                 active_discs = {name for name, act in disc_type_actions.items()
                                 if act.isChecked()}
                 disc_filtering = bool(active_discs)
                 any_filtering = (bool(active_tags) or disc_filtering
-                                 or only_disc)
+                                 or only_disc or only_locked)
 
                 def _disc_visible(disc_type) -> bool:
+                    if only_locked:
+                        return False  # ⚠ rows are never locked
                     if only_disc:
                         # One-click "show the discrepancies"; still honour the
                         # dropdown whitelist when the user has narrowed it.
@@ -3279,7 +3332,13 @@ def gui_main() -> None:
                     any_visible = False
                     for child in children:
                         tag_name = child.data(0, TAG_ROLE)
-                        visible = (not any_filtering) or (tag_name in active_tags)
+                        is_lck = child.data(0, LOCKED_ROLE)
+                        if only_locked:
+                            visible = bool(is_lck)
+                        elif not any_filtering:
+                            visible = True
+                        else:
+                            visible = tag_name in active_tags
                         child.setHidden(not visible)
                         if visible:
                             any_visible = True
@@ -3302,6 +3361,7 @@ def gui_main() -> None:
             for cb in tag_checkboxes.values():
                 cb.toggled.connect(_apply_filters)
             only_disc_cb.toggled.connect(_apply_filters)
+            only_locked_cb.toggled.connect(_apply_filters)
             for act in disc_type_actions.values():
                 act.toggled.connect(_apply_filters)
 
@@ -3995,6 +4055,167 @@ def gui_main() -> None:
         "year":            "Year",
     }
 
+    # Padlock gutter geometry for the Tag Edit table.  One helper serves the
+    # delegate's paint, the click hit-test and the elision measurement, so the
+    # three can never drift apart.
+    _LOCK_W = 14
+    _LOCK_PAD = 2
+    _LOCK_MIN_TEXT_W = 24
+
+    def _lock_rect(rect: "QtCore.QRect") -> "QtCore.QRect":
+        """The padlock's paint *and* hit rect inside a cell rect.
+
+        Returns a null rect when the column is too narrow to give the icon a
+        strip without hiding the value: the failure mode for a hand-narrowed
+        column is then no lock UI at all, never an invisible hot zone that
+        swallows clicks meant for the cell.
+        """
+        side = min(_LOCK_W, rect.height() - 2 * _LOCK_PAD)
+        if (side < 8
+                or rect.width() < side + 2 * _LOCK_PAD + _LOCK_MIN_TEXT_W):
+            return QtCore.QRect()
+        top = rect.top() + (rect.height() - side) // 2
+        return QtCore.QRect(rect.left() + _LOCK_PAD, top, side, side)
+
+    def _lock_strip(rect: "QtCore.QRect") -> int:
+        """Horizontal space the padlock takes from the cell's text."""
+        r = _lock_rect(rect)
+        return 0 if r.isNull() else r.width() + 2 * _LOCK_PAD
+
+    class _LockDelegate(QtWidgets.QStyledItemDelegate):
+        """Paints a padlock in a narrow gutter of each tag cell, and toggles
+        it on click.
+
+        Installed per column (1..N) via setItemDelegateForColumn, so it never
+        sees an album header row: headers are spanned from column 0 and are
+        therefore painted by column 0's delegate.
+        """
+
+        def __init__(self, table: "QtWidgets.QTableWidget") -> None:
+            super().__init__(table)
+            self._table = table
+
+        def paint(self, painter, option, index) -> None:
+            rect = _lock_rect(option.rect)
+            if rect.isNull():
+                super().paint(painter, option, index)
+                return
+
+            # 1. Full-width background and selection highlight with no text,
+            #    so the gutter is not an unhighlighted notch on a selected row.
+            bg = QtWidgets.QStyleOptionViewItem(option)
+            self.initStyleOption(bg, index)
+            bg.text = ""
+            widget = bg.widget
+            style = (widget.style() if widget is not None
+                     else QtWidgets.QApplication.style())
+            style.drawControl(
+                QtWidgets.QStyle.CE_ItemViewItem, bg, painter, widget
+            )
+
+            # 2. Qt's own text layout and elision, shrunk by the gutter.
+            opt = QtWidgets.QStyleOptionViewItem(option)
+            opt.rect = option.rect.adjusted(
+                _lock_strip(option.rect), 0, 0, 0
+            )
+            super().paint(painter, opt, index)
+
+            # 3. The padlock: solid when locked, a faint hint under the
+            #    cursor so an unlocked cell still advertises the click target.
+            locked = self._table.is_locked_cell(index)
+            hovered = bool(bg.state & QtWidgets.QStyle.State_MouseOver)
+            if locked or hovered:
+                self._paint_padlock(painter, rect, bg, locked=locked)
+
+        def sizeHint(self, option, index):
+            size = super().sizeHint(option, index)
+            size.setWidth(size.width() + _LOCK_W + 2 * _LOCK_PAD)
+            return size
+
+        def editorEvent(self, event, model, option, index) -> bool:
+            """Toggle the lock when the padlock itself is clicked.
+
+            Qt's own check indicators are handled here rather than in the
+            view's mousePressEvent, and for the same two reasons: this hook
+            gets the exact rect paint() was given (no viewport-offset or
+            hidden-column arithmetic), and it runs before the edit trigger, so
+            consuming the press stops an editor from opening over the icon.
+            """
+            if event.type() not in (
+                    QtCore.QEvent.MouseButtonPress,
+                    QtCore.QEvent.MouseButtonRelease,
+                    QtCore.QEvent.MouseButtonDblClick):
+                return super().editorEvent(event, model, option, index)
+            if event.button() != QtCore.Qt.LeftButton:
+                return False
+            rect = _lock_rect(option.rect)
+            if rect.isNull() or not rect.contains(event.pos()):
+                return False
+            # Consume press and double-click; act on release, matching
+            # QStyledItemDelegate's own check-indicator behaviour.
+            if event.type() == QtCore.QEvent.MouseButtonRelease:
+                self._table.toggle_lock(index)
+            return True
+
+        @staticmethod
+        def _paint_padlock(painter, rect, opt, *, locked: bool) -> None:
+            """Draw a padlock with QPainter.
+
+            Drawn rather than loaded: QIcon.fromTheme is null without an icon
+            theme and carries a fixed hue that fights a dark palette, and an
+            emoji glyph renders as a colour bitmap that ignores the pen.  A
+            painted lock takes its colour from the palette, so light/dark and
+            selected-row correctness come for free.
+            """
+            painter.save()
+            painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+            color = opt.palette.color(
+                QtGui.QPalette.HighlightedText
+                if opt.state & QtWidgets.QStyle.State_Selected
+                else QtGui.QPalette.Text
+            )
+            if not locked:
+                color.setAlpha(90)
+            w, h = rect.width(), rect.height()
+            stroke = max(1.0, w * 0.11)
+            body = QtCore.QRectF(
+                rect.left() + w * 0.12, rect.top() + h * 0.46,
+                w * 0.76, h * 0.46,
+            )
+            shackle = QtCore.QRectF(
+                rect.left() + w * 0.28, rect.top() + h * 0.10,
+                w * 0.44, h * 0.48,
+            )
+
+            painter.setPen(QtGui.QPen(
+                color, stroke, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap
+            ))
+            painter.setBrush(QtCore.Qt.NoBrush)
+            # Angles are in 1/16th degrees: the shackle's top half.
+            painter.drawArc(shackle, 0, 180 * 16)
+            painter.drawLine(
+                QtCore.QPointF(shackle.left(), shackle.center().y()),
+                QtCore.QPointF(shackle.left(), body.top()),
+            )
+            if locked:
+                # Closed: both legs reach the body.
+                painter.drawLine(
+                    QtCore.QPointF(shackle.right(), shackle.center().y()),
+                    QtCore.QPointF(shackle.right(), body.top()),
+                )
+                painter.setPen(QtCore.Qt.NoPen)
+                painter.setBrush(color)
+                painter.drawRoundedRect(body, w * 0.12, w * 0.12)
+            else:
+                painter.setBrush(QtCore.Qt.NoBrush)
+                painter.drawRoundedRect(
+                    body.adjusted(
+                        stroke / 2, stroke / 2, -stroke / 2, -stroke / 2
+                    ),
+                    w * 0.12, w * 0.12,
+                )
+            painter.restore()
+
     class _TagEditTable(QtWidgets.QTableWidget):
         """QTableWidget that shows a tooltip with the full cell value
         only when the text is too wide for its column and is being
@@ -4006,10 +4227,69 @@ def gui_main() -> None:
         for free as columns are resized and values are edited.
         """
 
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            # Locks are read from the tab's snapshot dict, shared by reference
+            # so a paint costs one lookup and never re-normalises a path.  Own
+            # dict per instance until set_lock_source replaces it.
+            self._locks: "dict[str, frozenset[str]]" = {}
+
+        def set_lock_source(
+            self, locks: "dict[str, frozenset[str]]"
+        ) -> None:
+            self._locks = locks
+
+        def _cell_lock_key(
+            self, index: "QtCore.QModelIndex"
+        ) -> "tuple[str, str] | None":
+            """The (filepath, tag) a cell locks, or None for a non-tag cell."""
+            col = index.column()
+            if col < 1 or col > len(EDITABLE_TAGS):
+                return None
+            item = self.item(index.row(), 0)
+            if item is None:
+                return None
+            data = item.data(QtCore.Qt.UserRole)
+            if not data or data == "header":
+                return None
+            return data, EDITABLE_TAGS[col - 1]
+
+        def is_locked_cell(self, index: "QtCore.QModelIndex") -> bool:
+            key = self._cell_lock_key(index)
+            if key is None:
+                return False
+            filepath, tag_name = key
+            return tag_name in self._locks.get(filepath, frozenset())
+
+        def toggle_lock(self, index: "QtCore.QModelIndex") -> None:
+            """Lock or unlock one tag on one file, and repaint that cell."""
+            key = self._cell_lock_key(index)
+            if key is None:
+                return
+            filepath, tag_name = key
+            locked = tag_name in self._locks.get(filepath, frozenset())
+            tag_locks.set_lock(filepath, tag_name, not locked)
+            self._locks[filepath] = tag_locks.locked_tags(filepath)
+            self.viewport().update(self.visualRect(index))
+
         def viewportEvent(self, event: QtCore.QEvent) -> bool:
             if event.type() == QtCore.QEvent.ToolTip:
                 index = self.indexAt(event.pos())
                 if index.isValid():
+                    # The padlock only shows a hint under the cursor, so its
+                    # tooltip is what makes the feature discoverable at all.
+                    if (self._cell_lock_key(index) is not None
+                            and _lock_rect(self.visualRect(index))
+                            .contains(event.pos())):
+                        QtWidgets.QToolTip.showText(
+                            event.globalPos(),
+                            "Locked — the Wiki Tagger will not change this "
+                            "tag.\nClick to unlock."
+                            if self.is_locked_cell(index) else
+                            "Click to lock this tag against the Wiki Tagger.",
+                            self.viewport(),
+                        )
+                        return True
                     text = index.data(QtCore.Qt.DisplayRole)
                     if text and self._is_elided(index, str(text)):
                         QtWidgets.QToolTip.showText(
@@ -4033,9 +4313,11 @@ def gui_main() -> None:
                 text_w = fm.horizontalAdvance(text)
             except AttributeError:  # Qt < 5.11
                 text_w = fm.width(text)
-            # Leave room for the cell's left/right text margins so a
+            # Leave room for the cell's left/right text margins, and for the
+            # padlock gutter the delegate takes out of the same width, so a
             # value that only just fits isn't flagged as elided.
-            avail = self.columnWidth(index.column()) - 8
+            avail = (self.columnWidth(index.column()) - 8
+                     - _lock_strip(self.visualRect(index)))
             return text_w > avail
 
     class TagEditTab(QtWidgets.QWidget):
@@ -4048,6 +4330,11 @@ def gui_main() -> None:
             self._original_values: dict[tuple[str, str], str] = {}
             self._dirty: set[tuple[str, str]] = set()
             self._batch_updating: bool = False
+
+            # Painting snapshot of the persistent tag locks, keyed by the raw
+            # filepath string as stored in the table so the padlock delegate
+            # needs one dict lookup and never re-normalises a path per paint.
+            self._locks: dict[str, frozenset[str]] = {}
 
             # --- Layout: splitter (main | sidebar) --------------------
             outer = QtWidgets.QHBoxLayout(self)
@@ -4062,7 +4349,9 @@ def gui_main() -> None:
             layout.addWidget(QtWidgets.QLabel(
                 "Edit tags on the albums below.  Select multiple "
                 "tracks and edit a cell to batch-apply the value "
-                "across the selection."
+                "across the selection.  Saving an edit locks that tag "
+                "against the Wiki Tagger; click the padlock in a cell to "
+                "lock or unlock it by hand."
             ))
 
             # --- Tag table -------------------------------------------
@@ -4089,6 +4378,19 @@ def gui_main() -> None:
             )
             self._table.setAcceptDrops(False)
             self._table.cellChanged.connect(self._on_cell_changed)
+            # Padlock gutter.  Per-column so the delegate never sees a spanned
+            # album header row, and mouse tracking so QAbstractItemView keeps
+            # State_MouseOver current — that is the whole hover mechanism; a
+            # hand-rolled hover index would repaint the entire table on every
+            # mouse move.
+            self._table.set_lock_source(self._locks)
+            self._lock_delegate = _LockDelegate(self._table)
+            for col in range(1, ncols):
+                self._table.setItemDelegateForColumn(
+                    col, self._lock_delegate
+                )
+            self._table.setMouseTracking(True)
+            self._table.viewport().setMouseTracking(True)
             layout.addWidget(self._table, stretch=2)
 
             # Add Folders / Remove Selected / Clear All / Refresh live
@@ -4140,6 +4442,14 @@ def gui_main() -> None:
             splitter.setStretchFactor(1, 0)
             splitter.setSizes([900, 220])
 
+            # --- Context menu (right-click Replace…) ----------------------
+            self._table.setContextMenuPolicy(
+                QtCore.Qt.CustomContextMenu
+            )
+            self._table.customContextMenuRequested.connect(
+                self._show_context_menu
+            )
+
             # --- Keyboard shortcuts -----------------------------------
             del_sc = QtWidgets.QShortcut(
                 QtGui.QKeySequence(QtCore.Qt.Key_Delete), self._table
@@ -4157,108 +4467,242 @@ def gui_main() -> None:
             """True when there are edits not yet written to disk."""
             return bool(self._dirty)
 
+        def reload_locks(self) -> None:
+            """Re-read every queued file's locks and repaint the padlocks.
+
+            Called after a configuration import replaces the lock store
+            wholesale; the in-table snapshot would otherwise stay stale.
+            """
+            for filepath in list(self._locks):
+                self._locks[filepath] = tag_locks.locked_tags(filepath)
+            self._table.viewport().update()
+
         # --- Drag & drop ---
         def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:
             if event.mimeData().hasUrls():
                 event.acceptProposedAction()
 
         def dropEvent(self, event: QtGui.QDropEvent) -> None:
+            """Accept whole folders and individual music files.
+
+            Dropping files shows only those tracks, under one header for the
+            album that owns them; dropping the folder later merges the rest
+            of the album into the same block.
+            """
+            dirs: list[str] = []
+            by_album: dict[str, list[str]] = {}
+            ignored = 0
             for url in event.mimeData().urls():
                 path = url.toLocalFile()
-                if path and os.path.isdir(path):
-                    for album_path in _expand_to_album_dirs(
-                            path, max_depth=preferences.scan_depth()):
-                        self._add_directory(album_path)
+                if not path:
+                    continue
+                if os.path.isdir(path):
+                    dirs.extend(_expand_to_album_dirs(
+                        path, max_depth=preferences.scan_depth()))
+                elif (os.path.splitext(path)[1].lower()
+                        in SUPPORTED_EXTENSIONS):
+                    by_album.setdefault(
+                        album_dir_for_file(path), []
+                    ).append(os.path.abspath(path))
+                else:
+                    ignored += 1
+
+            # Whole folders first, so a drop holding both a folder and one of
+            # its files ends up showing the full album rather than one track.
+            for album_path in dirs:
+                self._add_tracks(album_path)
+            for album_path, files in by_album.items():
+                self._add_tracks(album_path, files)
+            if ignored:
+                self._status_label.setText(
+                    f"Ignored {ignored} unsupported file(s)."
+                )
 
         # --- Table population ---
         def _add_directory(self, path: str) -> None:
-            # De-dup: check if this path already has a header row.
-            for row in range(self._table.rowCount()):
-                item = self._table.item(row, 0)
-                if (item
-                        and item.data(QtCore.Qt.UserRole) == "header"
-                        and item.data(QtCore.Qt.UserRole + 1) == path):
-                    return
+            """Show every track in *path* (the whole-folder entry point)."""
+            self._add_tracks(path)
 
-            tracks = scan_music_files(path)
+        def _add_tracks(
+            self, album_path: str, wanted: "list[str] | None" = None
+        ) -> None:
+            """Show tracks from *album_path*, creating or extending its block.
+
+            ``wanted`` limits the display to those filepaths (a partial drop);
+            ``None`` means the whole folder.  Both the ordering walk and
+            ``multi_disc`` come from the *full* folder scan, never from the
+            subset: that is what puts a merged track in its album position
+            rather than at the top of the block, and what makes a partial
+            block's labels identical to the ones the whole folder would
+            produce, so a later merge needs no relabelling.
+            """
+            album_key = os.path.normpath(os.path.abspath(album_path))
+            tracks = scan_music_files(album_key)
             if not tracks:
                 return
-
             multi_disc = len({t["disc"] for t in tracks}) > 1
-            album_name = guess_album_slug(path).replace("_", " ")
+
+            # The full track list is kept even for a partial add: it is what
+            # gives every insert its correct position within the album's own
+            # order.  `keep` only decides which of them actually get a row.
+            keep = (None if wanted is None
+                    else {os.path.abspath(p) for p in wanted})
+            if keep is not None and not any(
+                    os.path.abspath(t["path"]) in keep for t in tracks):
+                return
 
             self._batch_updating = True
             was_sorted = self._table.isSortingEnabled()
             self._table.setSortingEnabled(False)
             try:
-                # --- Album header row --------------------------------
-                header_row = self._table.rowCount()
-                self._table.insertRow(header_row)
-                header_item = QtWidgets.QTableWidgetItem(
-                    f"\U0001F4C1 {album_name}  —  {path}"
-                )
-                header_item.setData(QtCore.Qt.UserRole, "header")
-                header_item.setData(QtCore.Qt.UserRole + 1, path)
-                header_item.setFlags(
-                    header_item.flags()
-                    & ~QtCore.Qt.ItemIsEditable
-                )
-                hfont = header_item.font()
-                hfont.setBold(True)
-                header_item.setFont(hfont)
-                # Tint the header row so albums are visually distinct.
-                is_dark = (
-                    self.palette().window().color().lightness() < 128
-                )
-                bg = (QtGui.QColor(60, 60, 80) if is_dark
-                      else QtGui.QColor(220, 225, 235))
-                header_item.setBackground(bg)
-                self._table.setItem(header_row, 0, header_item)
-                # Fill remaining header columns (non-editable).
-                for col in range(1, self._table.columnCount()):
-                    spacer = QtWidgets.QTableWidgetItem("")
-                    spacer.setFlags(
-                        spacer.flags()
-                        & ~QtCore.Qt.ItemIsEditable
-                        & ~QtCore.Qt.ItemIsSelectable
+                header_row = self._find_header_row(album_key)
+                if header_row is None:
+                    header_row = self._append_header_row(
+                        album_key, is_full=wanted is None
                     )
-                    spacer.setBackground(bg)
-                    self._table.setItem(header_row, col, spacer)
-                self._table.setSpan(
-                    header_row, 0, 1, self._table.columnCount()
-                )
+                elif wanted is None:
+                    # A whole-folder add promotes the block permanently, so
+                    # File → Refresh keeps re-expanding it.
+                    self._table.item(header_row, 0).setData(
+                        QtCore.Qt.UserRole + 2, True
+                    )
 
-                # --- Track rows --------------------------------------
+                # Walk the album's own track order and insert whatever is
+                # missing directly after the previous track that is present.
+                # The insertion point is re-derived from the table on every
+                # iteration, so no cached row index can go stale as earlier
+                # inserts shift the rows below them.  header_row itself never
+                # moves: every insert is strictly below it.
+                prev_row = header_row
                 for t in tracks:
-                    filepath = t["path"]
-                    label = _format_track_number(t, multi_disc)
-                    all_tags = read_all_tags(filepath)
-
-                    row = self._table.rowCount()
-                    self._table.insertRow(row)
-
-                    # Column 0: track label (non-editable, stores path)
-                    track_item = QtWidgets.QTableWidgetItem(label)
-                    track_item.setData(
-                        QtCore.Qt.UserRole, filepath
-                    )
-                    track_item.setFlags(
-                        track_item.flags()
-                        & ~QtCore.Qt.ItemIsEditable
-                    )
-                    self._table.setItem(row, 0, track_item)
-
-                    # Columns 1..N: editable tag fields
-                    for i, tag_name in enumerate(EDITABLE_TAGS):
-                        value = all_tags.get(tag_name) or ""
-                        cell = QtWidgets.QTableWidgetItem(value)
-                        self._table.setItem(row, i + 1, cell)
-                        self._original_values[
-                            (filepath, tag_name)
-                        ] = value
+                    row = self._find_row_in_block(header_row, t["path"])
+                    if row is not None:
+                        prev_row = row
+                        continue
+                    if (keep is not None
+                            and os.path.abspath(t["path"]) not in keep):
+                        # Not asked for: leave the gap, and keep prev_row on
+                        # the last row that *is* shown so the next wanted
+                        # track still lands in album order.
+                        continue
+                    self._insert_track_row(prev_row + 1, t, multi_disc)
+                    prev_row += 1
+                self._reapply_header_spans()
             finally:
                 self._table.setSortingEnabled(was_sorted)
                 self._batch_updating = False
+
+        def _append_header_row(self, album_key: str, *, is_full: bool) -> int:
+            """Add an album header row at the end of the table; return it."""
+            album_name = guess_album_slug(album_key).replace("_", " ")
+            header_row = self._table.rowCount()
+            self._table.insertRow(header_row)
+            header_item = QtWidgets.QTableWidgetItem(
+                f"\U0001F4C1 {album_name}  —  {album_key}"
+            )
+            header_item.setData(QtCore.Qt.UserRole, "header")
+            header_item.setData(QtCore.Qt.UserRole + 1, album_key)
+            # Whether this block shows the whole folder or only the files the
+            # user dropped.  _refresh_queue needs the difference: a full block
+            # must re-expand to whatever is on disk now, a partial one must
+            # stay partial.
+            header_item.setData(QtCore.Qt.UserRole + 2, is_full)
+            header_item.setFlags(
+                header_item.flags()
+                & ~QtCore.Qt.ItemIsEditable
+            )
+            hfont = header_item.font()
+            hfont.setBold(True)
+            header_item.setFont(hfont)
+            # Tint the header row so albums are visually distinct.
+            is_dark = (
+                self.palette().window().color().lightness() < 128
+            )
+            bg = (QtGui.QColor(60, 60, 80) if is_dark
+                  else QtGui.QColor(220, 225, 235))
+            header_item.setBackground(bg)
+            self._table.setItem(header_row, 0, header_item)
+            # Fill remaining header columns (non-editable).
+            for col in range(1, self._table.columnCount()):
+                spacer = QtWidgets.QTableWidgetItem("")
+                spacer.setFlags(
+                    spacer.flags()
+                    & ~QtCore.Qt.ItemIsEditable
+                    & ~QtCore.Qt.ItemIsSelectable
+                )
+                spacer.setBackground(bg)
+                self._table.setItem(header_row, col, spacer)
+            return header_row
+
+        def _insert_track_row(
+            self, row: int, track: dict, multi_disc: bool
+        ) -> None:
+            """Insert one track row at *row* and record its baseline values."""
+            filepath = track["path"]
+            all_tags = read_all_tags(filepath)
+            self._table.insertRow(row)
+
+            # Column 0: track label (non-editable, stores path)
+            track_item = QtWidgets.QTableWidgetItem(
+                _format_track_number(track, multi_disc)
+            )
+            track_item.setData(QtCore.Qt.UserRole, filepath)
+            track_item.setFlags(
+                track_item.flags()
+                & ~QtCore.Qt.ItemIsEditable
+            )
+            self._table.setItem(row, 0, track_item)
+
+            # Columns 1..N: editable tag fields
+            for i, tag_name in enumerate(EDITABLE_TAGS):
+                value = all_tags.get(tag_name) or ""
+                cell = QtWidgets.QTableWidgetItem(value)
+                self._table.setItem(row, i + 1, cell)
+                self._original_values[(filepath, tag_name)] = value
+            self._locks[filepath] = tag_locks.locked_tags(filepath)
+
+        def _find_header_row(self, album_key: str) -> int | None:
+            """Row of the header for *album_key*, or None when absent."""
+            for row in range(self._table.rowCount()):
+                item = self._table.item(row, 0)
+                if (item
+                        and item.data(QtCore.Qt.UserRole) == "header"
+                        and item.data(QtCore.Qt.UserRole + 1) == album_key):
+                    return row
+            return None
+
+        def _find_row_in_block(
+            self, header_row: int, filepath: str
+        ) -> int | None:
+            """Row holding *filepath* inside one album block, or None.
+
+            Block-scoped on purpose: the table-wide _find_row_for_filepath
+            could return a row under a *different* header if the same file
+            ever appeared twice, which would send an insert outside the block.
+            """
+            for row in range(header_row + 1, self._table.rowCount()):
+                item = self._table.item(row, 0)
+                if not item:
+                    continue
+                data = item.data(QtCore.Qt.UserRole)
+                if data == "header":
+                    return None
+                if data == filepath:
+                    return row
+            return None
+
+        def _reapply_header_spans(self) -> None:
+            """Re-issue every header row's full-width span.
+
+            Idempotent, and cheap (one call per album).  Rows inserted into
+            the middle of the table shift the spans below them, so rather
+            than reason about Qt's span bookkeeping we simply restate it.
+            """
+            ncols = self._table.columnCount()
+            for row in range(self._table.rowCount()):
+                item = self._table.item(row, 0)
+                if item and item.data(QtCore.Qt.UserRole) == "header":
+                    self._table.setSpan(row, 0, 1, ncols)
 
         def _add_folders(self) -> None:
             dlg = QtWidgets.QFileDialog(
@@ -4329,6 +4773,7 @@ def gui_main() -> None:
                     rows_to_remove.add(r)
                     # Clean up tracking dicts
                     if filepath:
+                        self._locks.pop(filepath, None)
                         for tag_name in EDITABLE_TAGS:
                             key = (filepath, tag_name)
                             self._original_values.pop(key, None)
@@ -4358,6 +4803,7 @@ def gui_main() -> None:
             self._batch_updating = False
             self._original_values.clear()
             self._dirty.clear()
+            self._locks.clear()
             self._update_status()
 
         def _refresh_queue(self) -> None:
@@ -4367,12 +4813,25 @@ def gui_main() -> None:
             tags, so unsaved edits would be lost — confirm first.
             Folders that no longer exist (or no longer contain audio)
             drop out of the table."""
-            dirs = []
+            # Capture each block's identity *and* whether it shows the whole
+            # folder before the table is cleared: a full block must re-expand
+            # to whatever is on disk now (refresh's whole purpose), while a
+            # block built from dropped files must stay limited to them.
+            blocks: list[tuple[str, bool, list[str]]] = []
             for row in range(self._table.rowCount()):
                 item = self._table.item(row, 0)
-                if item and item.data(QtCore.Qt.UserRole) == "header":
-                    dirs.append(item.data(QtCore.Qt.UserRole + 1))
-            if not dirs:
+                if not item:
+                    continue
+                data = item.data(QtCore.Qt.UserRole)
+                if data == "header":
+                    blocks.append((
+                        item.data(QtCore.Qt.UserRole + 1),
+                        bool(item.data(QtCore.Qt.UserRole + 2)),
+                        [],
+                    ))
+                elif blocks and data:
+                    blocks[-1][2].append(data)
+            if not blocks:
                 return
             if self._dirty:
                 reply = QtWidgets.QMessageBox.question(
@@ -4392,9 +4851,10 @@ def gui_main() -> None:
             self._batch_updating = False
             self._original_values.clear()
             self._dirty.clear()
-            for path in dirs:
+            self._locks.clear()
+            for path, is_full, files in blocks:
                 if os.path.isdir(path):
-                    self._add_directory(path)
+                    self._add_tracks(path, None if is_full else files)
             self._update_status()
 
         # --- Cell editing & batch propagation ---
@@ -4481,6 +4941,11 @@ def gui_main() -> None:
 
             errors: list[str] = []
             saved = 0
+            # Every cell that reaches disk is locked, so the Wiki Tagger never
+            # undoes a hand edit.  Collected from successful writes only — a
+            # failed write must not leave a lock behind — and applied in one
+            # batch so the lock store is saved once.
+            to_lock: list[tuple[str, str]] = []
             for filepath, tag_name in list(self._dirty):
                 row = self._find_row_for_filepath(filepath)
                 if row is None:
@@ -4497,12 +4962,19 @@ def gui_main() -> None:
                     self._original_values[
                         (filepath, tag_name)
                     ] = value
+                    to_lock.append((filepath, tag_name))
                     saved += 1
                 except Exception as e:
                     errors.append(
                         f"{os.path.basename(filepath)} "
                         f"[{tag_name}]: {e}"
                     )
+
+            if to_lock:
+                tag_locks.set_locks(to_lock, True)
+                for filepath in {fp for fp, _ in to_lock}:
+                    self._locks[filepath] = tag_locks.locked_tags(filepath)
+                self._table.viewport().update()
 
             self._dirty.clear()
             self._update_status()
@@ -4511,12 +4983,169 @@ def gui_main() -> None:
                 f"Saved {saved} tag "
                 f"change{'s' if saved != 1 else ''}."
             )
+            if to_lock:
+                msg += (
+                    f"\n\nLocked {len(to_lock)} tag(s) against the Wiki "
+                    f"Tagger.  Click a padlock to unlock one."
+                )
             if errors:
                 msg += (
                     f"\n\n{len(errors)} error(s):\n"
                     + "\n".join(errors)
                 )
             QtWidgets.QMessageBox.information(self, "Save", msg)
+
+        # --- Context menu (batch Replace…) ---
+        def _show_context_menu(self, position) -> None:
+            """Right-click on selected tracks → Replace… for the clicked column."""
+            idx = self._table.indexAt(position)
+            col = idx.column()
+            if col < 1 or col > len(EDITABLE_TAGS):
+                return
+
+            tag_name = EDITABLE_TAGS[col - 1]
+            display = _TAG_DISPLAY.get(tag_name, tag_name)
+
+            # Collect selected track rows, skip headers.
+            track_rows: list[int] = []
+            for sel_idx in self._table.selectedIndexes():
+                r = sel_idx.row()
+                if r in (rr for rr in track_rows):
+                    continue
+                item = self._table.item(r, 0)
+                if not item:
+                    continue
+                if item.data(QtCore.Qt.UserRole) == "header":
+                    continue
+                track_rows.append(r)
+            # Deduplicate (selectedIndexes yields one per column per row).
+            track_rows = sorted(set(track_rows))
+            if not track_rows:
+                return
+
+            menu = QtWidgets.QMenu(self)
+            n = len(track_rows)
+            label = (
+                f"Replace {display}…"
+                if n == 1
+                else f"Replace {display} across {n} tracks…"
+            )
+            menu.addAction(
+                label,
+                lambda _col=col, _tag=tag_name, _rows=list(track_rows):
+                    self._replace_tag_values(_col, _tag, _rows),
+            )
+            menu.exec_(
+                self._table.viewport().mapToGlobal(position)
+            )
+
+        def _replace_tag_values(
+            self, col: int, tag_name: str, rows: list[int]
+        ) -> None:
+            """Show a Find → Replace dialog and apply to matching cells."""
+            display = _TAG_DISPLAY.get(tag_name, tag_name)
+
+            dlg = QtWidgets.QDialog(self)
+            dlg.setWindowTitle(f"Replace {display}")
+            form = QtWidgets.QFormLayout(dlg)
+
+            find_edit = QtWidgets.QLineEdit()
+            find_edit.setPlaceholderText("Find (leave empty to match all)")
+            form.addRow("&Find:", find_edit)
+
+            replace_edit = QtWidgets.QLineEdit()
+            replace_edit.setPlaceholderText("Replace with")
+            form.addRow("&Replace:", replace_edit)
+
+            case_cb = QtWidgets.QCheckBox("Case-sensitive")
+            form.addRow(case_cb)
+
+            btn_box = QtWidgets.QDialogButtonBox(
+                QtWidgets.QDialogButtonBox.Ok
+                | QtWidgets.QDialogButtonBox.Cancel
+            )
+            btn_box.button(
+                QtWidgets.QDialogButtonBox.Ok
+            ).setText("Replace")
+            btn_box.accepted.connect(dlg.accept)
+            btn_box.rejected.connect(dlg.reject)
+            form.addRow(btn_box)
+
+            if dlg.exec_() != QtWidgets.QDialog.Accepted:
+                return
+
+            find_text = find_edit.text()
+            replace_text = replace_edit.text()
+            case_sensitive = case_cb.isChecked()
+
+            replaced = 0
+            self._batch_updating = True
+            try:
+                for row in rows:
+                    cell = self._table.item(row, col)
+                    if cell is None:
+                        cell = QtWidgets.QTableWidgetItem("")
+                        self._table.setItem(row, col, cell)
+                    old_val = cell.text()
+
+                    # Compute new value.
+                    if not find_text:
+                        # Empty find → replace entire value.
+                        new_val = replace_text
+                    elif case_sensitive:
+                        new_val = old_val.replace(
+                            find_text, replace_text
+                        )
+                    else:
+                        # Case-insensitive substring replace.
+                        lower = old_val.lower()
+                        needle = find_text.lower()
+                        parts: list[str] = []
+                        start = 0
+                        while True:
+                            idx = lower.find(needle, start)
+                            if idx == -1:
+                                parts.append(old_val[start:])
+                                break
+                            parts.append(old_val[start:idx])
+                            parts.append(replace_text)
+                            start = idx + len(needle)
+                        new_val = "".join(parts)
+
+                    if new_val == old_val:
+                        continue
+
+                    cell.setText(new_val)
+
+                    # Dirty tracking.
+                    track_item = self._table.item(row, 0)
+                    if track_item:
+                        filepath = track_item.data(
+                            QtCore.Qt.UserRole
+                        )
+                        if filepath and filepath != "header":
+                            orig = self._original_values.get(
+                                (filepath, tag_name), ""
+                            )
+                            if new_val.strip() != orig:
+                                self._dirty.add(
+                                    (filepath, tag_name)
+                                )
+                            else:
+                                self._dirty.discard(
+                                    (filepath, tag_name)
+                                )
+                    replaced += 1
+            finally:
+                self._batch_updating = False
+
+            self._update_status()
+            if replaced:
+                QtWidgets.QMessageBox.information(
+                    self, "Replace",
+                    f"Replaced {replaced} "
+                    f"cell{'s' if replaced != 1 else ''}."
+                )
 
         def _find_row_for_filepath(
             self, filepath: str
@@ -4982,6 +5611,11 @@ def gui_main() -> None:
             external_tools.reload()
             album_overrides.reload()
             availability.reload()
+            tag_locks.reload()
+            # Clearing the module cache is not enough: the Tag Edit tab holds
+            # its own lock snapshot for painting, so its padlocks would still
+            # show the pre-import state.
+            self._tag_edit_tab.reload_locks()
             QtWidgets.QMessageBox.information(
                 self, "Import configuration",
                 "Imported: " + (", ".join(changed) if changed else "nothing")

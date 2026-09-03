@@ -73,6 +73,7 @@ from tag_io import (
 )
 import touhoudb
 import availability
+import tag_locks
 from theme_mapping import (
     load_theme_mapping,
     translate_titles,
@@ -819,6 +820,7 @@ def _empty_result(
         "cred_skipped": 0,
         "artist_wrote":   0,
         "artist_skipped": 0,
+        "locked_skipped": 0,
         "missing_members": [],
         "date_mismatch":   None,
         "catalog_mismatch": None,
@@ -1735,6 +1737,10 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
     # Per-track artist / artistsort counters (TouhouDB-driven)
     artist_wrote   = 0
     artist_skipped = 0
+    # Tags the user locked by hand in the Tag Edit tab and that this run
+    # therefore left alone.  Counts locked tags respected, not writes
+    # prevented: a locked tag that would have been skipped anyway is counted.
+    locked_skipped = 0
     # Per-track tag change log — each entry is a dict with keys:
     #   filename, tag, old (str|None), new (str|None)
     # Populated for every tag that would be written (or cleared/deleted)
@@ -1758,13 +1764,24 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
     for local_file, wiki_track in pairs:
         fname = local_file["filename"]
         fpath = local_file["path"]
+        # A tag the user set by hand in the Tag Edit tab is locked and the
+        # wiki never overrides it — not even `force_credits`, and not even
+        # `album`, which is otherwise authoritative.  Narrowing the existing
+        # per-tag gate is all it takes: every write decision below is already
+        # spelled `<tag> in file_tags`.
+        locked_here = selected_tags & tag_locks.locked_tags(fpath)
+        file_tags = selected_tags - locked_here
+        if locked_here:
+            locked_skipped += len(locked_here)
+            print(f"  [LOCKED]    {fname}  "
+                  f"{', '.join(sorted(locked_here))}")
         # Print disc header when transitioning between discs
         if local_multi_disc and local_file["disc"] != current_disc:
             current_disc = local_file["disc"]
             print(f"\n── Disc {current_disc} ──")
 
         # --- Grouping write (existing behaviour) ---
-        if "grouping" not in selected_tags:
+        if "grouping" not in file_tags:
             pass
         elif wiki_track is None:
             print(f"  [NO MATCH]  {fname}")
@@ -1846,7 +1863,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
                 ("date",          album_date),
                 ("year",          album_year),
             ):
-                if meta_tag not in selected_tags or not meta_val:
+                if meta_tag not in file_tags or not meta_val:
                     continue
                 existing = _get_existing_tag(fpath, meta_tag)
                 if existing:
@@ -1875,7 +1892,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
             # multi-value fields (one genre= per genre on FLAC/OGG/Opus)
             # via set_genres — it can't share the _set_tag loop above.
             wiki_genres = album_info.get("genres") or []
-            if "genre" in selected_tags and wiki_genres:
+            if "genre" in file_tags and wiki_genres:
                 existing_genres = read_genres(fpath)
                 merged = _merge_genres(existing_genres, wiki_genres)
                 if merged == existing_genres:
@@ -1905,7 +1922,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
 
             # --- Album title: always overwrite on mismatch ---
             new_album = album_info.get("album")
-            if "album" in selected_tags and new_album:
+            if "album" in file_tags and new_album:
                 existing = _get_existing_tag(fpath, "album")
                 if existing == new_album:
                     meta_skipped += 1
@@ -1958,8 +1975,8 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
             # The sort value is written only when it is Latin AND differs from
             # the (effective) `albumartist`, so the field is never a duplicate
             # of the display name nor a second CJK copy.
-            wants_albumartist = "albumartist" in selected_tags
-            wants_albumartistsort = "albumartistsort" in selected_tags
+            wants_albumartist = "albumartist" in file_tags
+            wants_albumartistsort = "albumartistsort" in file_tags
             raw_artists = album_info.get("album_artists") or []
             existing_aa = (
                 _get_existing_tag(fpath, "albumartist")
@@ -2066,7 +2083,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
                 ("vocalist",  wiki_track.get("vocalists", [])),
                 ("lyricist",  wiki_track.get("lyricists", [])),
             ):
-                if cred_tag not in selected_tags or not cred_list:
+                if cred_tag not in file_tags or not cred_list:
                     continue
                 existing = _get_existing_tag(fpath, cred_tag)
                 cred_val = "; ".join(cred_list)
@@ -2108,7 +2125,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
         # are never clobbered; `artistsort` additionally won't be written if
         # the romanised join still contains CJK (incomplete romanisation).
         if (use_touhoudb and wiki_track is not None
-                and selected_tags & _ARTIST_TAGS):
+                and file_tags & _ARTIST_TAGS):
             names_jp: list[str] = []
             for n in (wiki_track.get("arrangers_jp", [])
                       + wiki_track.get("vocalists_jp", [])):
@@ -2132,7 +2149,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
 
             if names_jp:
                 # artist (original names)
-                if "artist" not in selected_tags:
+                if "artist" not in file_tags:
                     pass
                 elif _get_existing_tag(fpath, "artist"):
                     artist_skipped += 1
@@ -2154,7 +2171,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
 
                 # artistsort (romanised)
                 sort_val = "; ".join(resolve_roman(n) for n in names_jp)
-                if "artistsort" not in selected_tags:
+                if "artistsort" not in file_tags:
                     pass
                 elif not _is_latin_script(sort_val):
                     # incomplete romanisation — don't write CJK to a sort
@@ -2179,7 +2196,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
         # --- Romanisation (independent of whether grouping was set —
         #     a track with no wiki match or no original-title may still
         #     have a Japanese title that benefits from titlesort) ---
-        if do_romanize:
+        if do_romanize and "titlesort" in file_tags:
             fb = wiki_track["title"] if wiki_track else None
             try:
                 rm = japanese_romanizer.romanize_file(
@@ -2231,6 +2248,80 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
                 print(f"              ROMANIZE ERROR: {rm.get('error')}")
                 rm_errors += 1
 
+        # --- Report what the wiki would have written for locked tags ---
+        # Locked tags were excluded from file_tags so no writes happened.
+        # Compute the would-be values here (best-effort; some complex tags
+        # like titlesort are omitted) so the GUI summary can show a
+        # "wiki would have set X" diff for each locked tag.
+        if locked_here:
+            _cred_key = {
+                "arranger": "arrangers", "vocalist": "vocalists",
+                "lyricist": "lyricists",
+            }
+            for ltag in sorted(locked_here):
+                wiki_val: str | None = None
+
+                if ltag == "grouping":
+                    if (wiki_track
+                            and wiki_track.get("original_titles")):
+                        wiki_val = "; ".join(
+                            wiki_track["original_titles"])
+                    elif (wiki_track
+                          and not wiki_track["original_titles"]):
+                        wiki_val = ""  # would clear (original composition)
+                elif ltag == "album" and fetch_metadata:
+                    wiki_val = album_info.get("album")
+                elif ltag == "catalognumber" and fetch_metadata:
+                    catnos_l = album_info.get("catalog_numbers") or []
+                    if len(catnos_l) == 1:
+                        wiki_val = catnos_l[0]
+                    elif len(catnos_l) > 1:
+                        di = local_file["disc"] - 1
+                        wiki_val = (catnos_l[di]
+                                    if 0 <= di < len(catnos_l)
+                                    else "; ".join(catnos_l))
+                elif ltag == "date" and fetch_metadata:
+                    wiki_val = album_info.get("date")
+                elif ltag == "year" and fetch_metadata:
+                    d = album_info.get("date")
+                    wiki_val = d[:4] if d else None
+                elif ltag == "albumartist" and fetch_metadata:
+                    ra = album_info.get("album_artists") or []
+                    if ra:
+                        wiki_val = " & ".join(ra)
+                elif ltag == "albumartistsort" and fetch_metadata:
+                    ra = album_info.get("album_artists") or []
+                    if ra:
+                        rom = " & ".join(resolve_roman(c) for c in ra)
+                        if _is_latin_script(rom):
+                            wiki_val = rom
+                elif ltag in _cred_key and fetch_credits and wiki_track:
+                    cl = wiki_track.get(_cred_key[ltag], [])
+                    if cl:
+                        wiki_val = "; ".join(cl)
+                # artist, artistsort, titlesort — too complex to
+                # recompute outside the main write logic; omitted.
+
+                if wiki_val is None:
+                    continue
+                existing = (
+                    read_grouping(fpath) if ltag == "grouping"
+                    else _get_existing_tag(fpath, ltag)
+                )
+                # Only report when the wiki value differs from what's
+                # already on disk — a lock that agrees with the wiki is
+                # a no-op and not interesting.
+                if wiki_val == "" and not existing:
+                    continue  # would-clear on already-empty
+                if wiki_val and wiki_val == existing:
+                    continue
+                tag_changes.append({
+                    "filename": fname, "tag": ltag,
+                    "old": existing or None,
+                    "new": wiki_val if wiki_val else None,
+                    "locked": True,
+                })
+
     print("-" * 60)
     action = "Would tag" if dry_run else "Tagged"
     clear_action = "Would clear" if dry_run else "Cleared"
@@ -2267,6 +2358,10 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
         summary_line += (
             f"  ||  {a_action} artist: {artist_wrote} new, "
             f"{artist_skipped} skipped"
+        )
+    if locked_skipped:
+        summary_line += (
+            f"  ||  Locked: {locked_skipped} tag(s) left untouched"
         )
     print(summary_line)
     if use_touhoudb:
@@ -2306,6 +2401,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
         "cred_skipped": cred_skipped,
         "artist_wrote":   artist_wrote,
         "artist_skipped": artist_skipped,
+        "locked_skipped": locked_skipped,
         "missing_members": missing_members,
         "date_mismatch":   date_mismatch,
         "catalog_mismatch": catalog_mismatch,
@@ -2671,6 +2767,7 @@ def main() -> None:
         total_meta_skipped = 0
         total_cred_wrote  = 0
         total_cred_skipped = 0
+        total_locked      = 0
         failed            = []
         any_romanize = (
             not args.no_romanize and ROMANIZER_AVAILABLE
@@ -2691,6 +2788,7 @@ def main() -> None:
             total_meta_skipped += r.get("meta_skipped", 0)
             total_cred_wrote  += r.get("cred_wrote", 0)
             total_cred_skipped += r.get("cred_skipped", 0)
+            total_locked      += r.get("locked_skipped", 0)
             if r["error"]:
                 failed.append(r)
             else:
@@ -2736,6 +2834,11 @@ def main() -> None:
                 f"{c_action} credits: "
                 f"{total_cred_wrote} new, "
                 f"{total_cred_skipped} skipped"
+            )
+        if total_locked:
+            print(
+                f"Locked: {total_locked} tag(s) left untouched "
+                f"(edited by hand in the Tag Edit tab)"
             )
         if any_romanize:
             rm_action = "Would write" if args.dry_run else "Wrote"

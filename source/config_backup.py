@@ -65,6 +65,17 @@ def build_payload() -> dict:
         str(path): str(slug) for path, slug in albums.items()
         if isinstance(path, str) and isinstance(slug, str) and slug.strip()
     }
+    locks = _read("tag_locks.json").get("locks", {})
+    if not isinstance(locks, dict):
+        locks = {}
+    locks = {
+        str(path): sorted(
+            t for t in tags if isinstance(t, str) and t.strip()
+        )
+        for path, tags in locks.items()
+        if isinstance(path, str) and isinstance(tags, list)
+    }
+    locks = {path: tags for path, tags in locks.items() if tags}
     unavailable = _read("availability.json")
     stats = _read("stats.json")
     return {
@@ -74,6 +85,7 @@ def build_payload() -> dict:
         "auth": _safe_auth(),
         "external_tools": {"overrides": overrides},
         "album_overrides": {"slugs": albums},
+        "tag_locks": {"locks": locks},
         "availability": {
             "albums": unavailable.get("albums", [])
             if isinstance(unavailable.get("albums", []), list) else [],
@@ -146,6 +158,22 @@ def import_file(path: str) -> list[str]:
             if isinstance(k, str) and isinstance(v, str) and v.strip()
         }})
         changed.append("album identity overrides")
+    locks = raw.get("tag_locks")
+    if isinstance(locks, dict):
+        entries = locks.get("locks", {})
+        if not isinstance(entries, dict):
+            entries = {}
+        clean = {}
+        for path, tags in entries.items():
+            if not isinstance(path, str) or not isinstance(tags, list):
+                continue
+            names = sorted({
+                t.strip() for t in tags if isinstance(t, str) and t.strip()
+            })
+            if names:
+                clean[path] = names
+        _write("tag_locks.json", {"locks": clean})
+        changed.append("manual tag locks")
     unavailable = raw.get("availability")
     if isinstance(unavailable, dict):
         _write("availability.json", {

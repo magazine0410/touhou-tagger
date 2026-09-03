@@ -29,6 +29,7 @@ The directory contains:
 | `auth.json` | THBWiki browser choice, auto-pull preference, User-Agent, and `curl_cffi` impersonation profile. It never contains a browser cookie. |
 | `external_tools.json` | User-selected executable path overrides for external tools. It contains no credentials or command output. |
 | `album_overrides.json` | Reviewed Wiki Slug overrides keyed by normalized absolute album path. |
+| `tag_locks.json` | Tag names locked against Wiki Tagger overwrite, keyed by normalized absolute file path. It holds local file paths and tag names; no credentials. Importing a backup replaces the locks wholesale. |
 | `retag_credits_names.json` | TouhouDB romanizations resolved by `retag_credits.py --romanize` (a local-only maintenance tool, not part of this repository), cached between sessions so a resumed migration does not re-query them. Public artist names only; no credentials. |
 | `retag_credits_state.json` | Per-album progress of the `retag_credits.py` credit-repair migration (a local-only maintenance tool, not part of this repository), so an expired THBWiki session resumes instead of restarting. It holds album paths and per-album outcomes; no credentials. Delete it, or run with `--reset`, to start the migration over. |
 | `preferences.json` | Non-secret folder scan depth, CUE original-handling choice, Wiki Tagger field selection, and small GUI state. |
@@ -45,8 +46,8 @@ take precedence and make the corresponding GUI change action read-only.
 
 **Settings → Export configuration…** writes an explicit, cookie-free JSON
 backup of browser preferences, executable paths, folder-scan/CUE/tag-selection preferences,
-album identity overrides, unavailable-folder marks, Statistics' library root,
-and small GUI preferences. Cookies, browser profiles, and other session
+album identity overrides, manual tag locks, unavailable-folder marks,
+Statistics' library root, and small GUI preferences. Cookies, browser profiles, and other session
 secrets are neither exported nor imported. The backup does contain local
 library, album, and executable paths, so review it before sharing publicly.
 The default `touhou_tagger_backup.json` filename is ignored by the repository.
