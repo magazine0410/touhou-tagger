@@ -176,6 +176,28 @@ class TagSelectionTests(unittest.TestCase):
             dry_run=False,
         )
 
+    def test_touhoudb_stays_on_for_selections_that_consume_it(self):
+        """Credits and albumartistsort are romanised through TouhouDB too.
+
+        The gate used to look at ``artist``/``artistsort`` alone, so an
+        arranger-only run silently dropped the TouhouDB client and kept the
+        wiki's Japanese name.  ``fetch_album_plan`` decides this before it
+        touches the directory, so a missing directory keeps the test offline.
+        """
+        for selection, expected in (
+            (("arranger",), True),
+            (("albumartistsort",), True),
+            (("artistsort",), True),
+            (("grouping",), False),
+        ):
+            with self.subTest(selection=selection):
+                plan = touhou_tagger.fetch_album_plan(
+                    "Example_Album", "/no/such/directory",
+                    use_touhoudb=True, selected_tags=selection,
+                )
+                self.assertEqual(plan.error, "directory not found")
+                self.assertEqual(plan.use_touhoudb, expected)
+
 
 if __name__ == "__main__":
     unittest.main()

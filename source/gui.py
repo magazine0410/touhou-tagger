@@ -337,6 +337,67 @@ def gui_main() -> None:
 
     QtCore.qInstallMessageHandler(_qt_message_handler)
 
+    def _has_write_errors(result: dict) -> bool:
+        """True when an album finished but some of its writes failed.
+
+        The album-level ``error`` field only reports a whole-album failure
+        (no directory, nothing on the wikis).  Individual file writes are
+        counted instead, in ``errors`` for the tagging pass and ``rm_errors``
+        for the romanisation pass, so a half-tagged album looks perfectly
+        successful unless both counters are consulted.
+        """
+        return bool(result.get("errors") or result.get("rm_errors"))
+
+    class _WriteGuard:
+        """One tag writer at a time, across every tab.
+
+        The Wiki Tagger, the Romanise tab and Tag Edit all do their own
+        read-modify-write on the same files, and each used to check only its
+        own worker.  Two overlapping runs then raced: whichever saved last
+        wrote back tags it had read before the other's changes landed,
+        silently dropping them.  The guard is plain GUI-thread state — every
+        acquire and release happens in a slot on that thread, so no lock is
+        needed — and names its owner so the refusal can say who is busy.
+        """
+
+        def __init__(self) -> None:
+            self._owner: str | None = None
+
+        @property
+        def owner(self) -> "str | None":
+            return self._owner
+
+        def acquire(self, name: str) -> bool:
+            """Take the guard for ``name``; False when someone else holds it."""
+            if self._owner is not None:
+                return False
+            self._owner = name
+            return True
+
+        def release(self, name: str) -> None:
+            """Give the guard back.  A no-op unless ``name`` holds it."""
+            if self._owner == name:
+                self._owner = None
+
+    _write_guard = _WriteGuard()
+    # Guard owner names — also what the refusal message calls them.
+    _WIKI_WRITER = "Wiki Tagger"
+    _ROMANIZE_WRITER = "Romanise tab"
+    _TAG_EDIT_WRITER = "Tag Edit tab"
+
+    def _refuse_if_writing(parent, what: str) -> bool:
+        """Warn and return True when another tab is writing tags right now."""
+        owner = _write_guard.owner
+        if owner is None:
+            return False
+        QtWidgets.QMessageBox.warning(
+            parent, "Another run is writing tags",
+            f"The {owner} is writing tags right now.\n\n"
+            f"Wait for it to finish before you {what} — two passes over the "
+            "same files can overwrite each other's changes."
+        )
+        return True
+
     # =====================================================================
     # Widgets
     # =====================================================================
@@ -773,6 +834,10 @@ def gui_main() -> None:
             self._worker: _WikiWorker | None = None
             self._results: list[dict] = []
             self._jobs: list[tuple[str, str, bool]] = []
+            # Set by the main window while it waits for a cancelled run to
+            # finish at close time: the run still ends cleanly, it just
+            # doesn't pop its summary dialog in front of a closing window.
+            self._shutting_down = False
             self._suppress_slug_persistence = False
             self._active_wiki_tags: set[str] = set(
                 preferences.wiki_tag_selection()
@@ -2130,6 +2195,8 @@ def gui_main() -> None:
         def _start_tagging(self) -> None:
             if self._worker is not None and self._worker.isRunning():
                 return
+            if _refuse_if_writing(self, "tag these albums"):
+                return
 
             jobs = []
             job_names = []
@@ -2219,6 +2286,7 @@ def gui_main() -> None:
             self._worker.cookie_error.connect(self._on_cookie_error)
             self._worker.confirm_needed.connect(self._on_confirm_needed)
             self._worker.all_done.connect(self._on_all_done)
+            _write_guard.acquire(_WIKI_WRITER)
             self._worker.start()
 
         def _on_cookie_error(self, message: str) -> None:
@@ -2601,6 +2669,7 @@ def gui_main() -> None:
 
         @QtCore.pyqtSlot()
         def _on_all_done(self) -> None:
+            _write_guard.release(_WIKI_WRITER)
             self._tag_btn.setEnabled(True)
             self._tag_btn.setText("&Tag All")
             self._cancel_btn.setEnabled(False)
@@ -2624,10 +2693,17 @@ def gui_main() -> None:
                 r.get("cancel_batch") for r in self._results)
             skipped_mismatch = [r for r in self._results
                                 if r.get("mismatch_skipped")]
-            succeeded = [r for r in self._results
+            # An album that ran to the end but had individual write failures
+            # is *not* a success: its files are half-tagged, so it must stay
+            # in the queue for a retry rather than being auto-cleared.  The
+            # album-level `error` field only covers a fetch/scan failure, so
+            # the per-file counters have to be checked too.
+            completed = [r for r in self._results
                          if not r["error"]
                          and not r.get("mismatch_skipped")
                          and not r.get("cancel_batch")]
+            succeeded = [r for r in completed if not _has_write_errors(r)]
+            partial = [r for r in completed if _has_write_errors(r)]
             failed = [r for r in self._results if r["error"]]
 
             # When the run was cancelled, lead with that fact so the
@@ -2643,65 +2719,80 @@ def gui_main() -> None:
                     "album(s) before stopping.\n"
                 )
 
+            def _album_lines(r: dict, bullet: str) -> None:
+                """Append one album's detail block to the summary."""
+                action = "Would tag" if dry else "Tagged"
+                clear_action = "Would clear" if dry else "Cleared"
+                lines.append(
+                    f"  {bullet} {r['album']}  ({r['source']})\n"
+                    f"      {action}: {r['tagged']}  |  "
+                    f"{clear_action}: {r.get('cleared', 0)}  |  "
+                    f"Skipped: {r['skipped']}  |  "
+                    f"Errors: {r['errors']}"
+                )
+                if do_romanize:
+                    rm_action = "Would romanise" if dry else "Romanised"
+                    lines.append(
+                        f"      {rm_action}: {r.get('romanized', 0)}"
+                        f" new, {r.get('overwritten', 0)} overwritten"
+                        f"  |  RM-skipped: {r.get('rm_skipped', 0)}"
+                        f"  |  RM-errors: {r.get('rm_errors', 0)}"
+                    )
+                if use_touhoudb:
+                    if r.get("artist_wrote") or r.get("artist_skipped"):
+                        a_action = "Would write" if dry else "Wrote"
+                        lines.append(
+                            f"      {a_action} artist: "
+                            f"{r.get('artist_wrote', 0)} new, "
+                            f"{r.get('artist_skipped', 0)} skipped"
+                        )
+                    if r.get("missing_members"):
+                        lines.append(
+                            "      ⚠ Missing members: "
+                            + ", ".join(r["missing_members"])
+                        )
+                    if r.get("date_mismatch"):
+                        d = r["date_mismatch"]
+                        lines.append(
+                            f"      ⚠ Date — wiki: {d[0]}  |  "
+                            f"TouhouDB: {d[1]}"
+                        )
+                    if r.get("catalog_mismatch"):
+                        c = r["catalog_mismatch"]
+                        lines.append(
+                            f"      ⚠ Catalog — wiki: {c[0]}  |  "
+                            f"TouhouDB: {c[1]}"
+                        )
+                if r.get("title_discrepancies"):
+                    kinds: dict[str, int] = {}
+                    for d in r["title_discrepancies"]:
+                        kinds[d["kind"]] = kinds.get(d["kind"], 0) + 1
+                    lines.append(
+                        "      ⚠ Track discrepancies: "
+                        + ", ".join(f"{v} {k}" for k, v in kinds.items())
+                        + " (see the Changes tab)"
+                    )
+
             if succeeded:
                 lines.append(
                     f"Successfully processed {len(succeeded)} album(s):\n"
                 )
                 for r in succeeded:
-                    action = "Would tag" if dry else "Tagged"
-                    clear_action = "Would clear" if dry else "Cleared"
-                    lines.append(
-                        f"  ✓ {r['album']}  ({r['source']})\n"
-                        f"      {action}: {r['tagged']}  |  "
-                        f"{clear_action}: {r.get('cleared', 0)}  |  "
-                        f"Skipped: {r['skipped']}  |  "
-                        f"Errors: {r['errors']}"
-                    )
-                    if do_romanize:
-                        rm_action = "Would romanise" if dry else "Romanised"
-                        lines.append(
-                            f"      {rm_action}: {r.get('romanized', 0)}"
-                            f" new, {r.get('overwritten', 0)} overwritten"
-                            f"  |  RM-skipped: {r.get('rm_skipped', 0)}"
-                            f"  |  RM-errors: {r.get('rm_errors', 0)}"
-                        )
-                    if use_touhoudb:
-                        if r.get("artist_wrote") or r.get("artist_skipped"):
-                            a_action = "Would write" if dry else "Wrote"
-                            lines.append(
-                                f"      {a_action} artist: "
-                                f"{r.get('artist_wrote', 0)} new, "
-                                f"{r.get('artist_skipped', 0)} skipped"
-                            )
-                        if r.get("missing_members"):
-                            lines.append(
-                                "      ⚠ Missing members: "
-                                + ", ".join(r["missing_members"])
-                            )
-                        if r.get("date_mismatch"):
-                            d = r["date_mismatch"]
-                            lines.append(
-                                f"      ⚠ Date — wiki: {d[0]}  |  "
-                                f"TouhouDB: {d[1]}"
-                            )
-                        if r.get("catalog_mismatch"):
-                            c = r["catalog_mismatch"]
-                            lines.append(
-                                f"      ⚠ Catalog — wiki: {c[0]}  |  "
-                                f"TouhouDB: {c[1]}"
-                            )
-                    if r.get("title_discrepancies"):
-                        kinds: dict[str, int] = {}
-                        for d in r["title_discrepancies"]:
-                            kinds[d["kind"]] = kinds.get(d["kind"], 0) + 1
-                        lines.append(
-                            "      ⚠ Track discrepancies: "
-                            + ", ".join(f"{v} {k}" for k, v in kinds.items())
-                            + " (see the Changes tab)"
-                        )
+                    _album_lines(r, "✓")
+
+            if partial:
+                if succeeded:
+                    lines.append("")
+                lines.append(
+                    f"⚠  Finished with write errors — {len(partial)} "
+                    "album(s) are only partly tagged and stay in the "
+                    "queue:\n"
+                )
+                for r in partial:
+                    _album_lines(r, "⚠")
 
             if skipped_mismatch:
-                if succeeded:
+                if succeeded or partial:
                     lines.append("")
                 lines.append(
                     f"⏭  Skipped {len(skipped_mismatch)} album(s) "
@@ -2713,7 +2804,7 @@ def gui_main() -> None:
                     )
 
             if failed:
-                if succeeded or skipped_mismatch:
+                if succeeded or partial or skipped_mismatch:
                     lines.append("")
                 lines.append(
                     f"Failed to process {len(failed)} album(s):\n"
@@ -2762,19 +2853,23 @@ def gui_main() -> None:
             self._log.appendPlainText(f"\n{'=' * 60}")
             self._log.appendPlainText(summary)
 
-            self._show_summary_dialog(summary)
+            if not self._shutting_down:
+                self._show_summary_dialog(summary)
 
             # Build the set of directories that tagged successfully so
             # we can either remove their rows (auto-clear) or refresh
             # their displayed grouping values in place.  Mismatch-skipped
             # albums are excluded — nothing was written, and the user likely
             # wants to keep them in the queue to fix the slug and retry.
+            # Albums with per-file write errors are excluded here as well:
+            # nothing that still needs a retry may be cleared from the queue.
             success_dirs = {
                 self._jobs[i][1]
                 for i, r in enumerate(self._results)
                 if not r["error"]
                 and not r.get("mismatch_skipped")
                 and not r.get("cancel_batch")
+                and not _has_write_errors(r)
             }
 
             if self._auto_clear_cb.isChecked() and succeeded:
@@ -3076,15 +3171,24 @@ def gui_main() -> None:
                 album_item.setFont(0, font)
                 album_children: list[QtWidgets.QTreeWidgetItem] = []
 
-                # Group tag changes by filename, preserving order.
+                # Group tag changes by file path, preserving order.  Two
+                # discs of one album routinely hold the same basename
+                # ("01 - Intro.flac"); grouping on that alone would merge
+                # them into one ambiguous track row.  The label keeps the
+                # disc subfolder when there is one, so the rows stay
+                # distinguishable.
                 changes = r.get("tag_changes", [])
                 tracks: OrderedDict[str, list[dict]] = OrderedDict()
+                labels: dict[str, str] = {}
                 for ch in changes:
-                    tracks.setdefault(ch["filename"], []).append(ch)
+                    path = ch.get("path") or ch["filename"]
+                    tracks.setdefault(path, []).append(ch)
+                    labels.setdefault(
+                        path, self._change_track_label(ch, music_dir))
 
-                for fname, file_changes in tracks.items():
+                for path, file_changes in tracks.items():
                     track_item = QtWidgets.QTreeWidgetItem(
-                        album_item, [fname, "", ""]
+                        album_item, [labels[path], "", ""]
                     )
                     track_item.setExpanded(True)
                     album_children.append(track_item)
@@ -3373,6 +3477,26 @@ def gui_main() -> None:
         # it.  Title rows are per-track (one file); date/catalog rows are
         # album-level (every file in the album).
         @staticmethod
+        def _change_track_label(change: dict, music_dir: str) -> str:
+            """Row label for one track in the Changes tree.
+
+            The bare filename for a flat album; the disc subfolder plus the
+            filename ("Disc 2/01 - Intro.flac") when the file sits below the
+            album directory, so two discs sharing a basename stay apart.
+            """
+            path = change.get("path") or ""
+            name = change.get("filename") or os.path.basename(path)
+            if not path or not music_dir:
+                return name
+            try:
+                rel = os.path.relpath(path, music_dir)
+            except ValueError:          # different drives (Windows)
+                return name
+            if rel.startswith(".."):    # outside the album dir — stay literal
+                return name
+            return rel
+
+        @staticmethod
         def _src_display(source: str) -> str:
             """Human-readable name for an overwrite source key."""
             return {"wiki": "the wiki",
@@ -3489,11 +3613,14 @@ def gui_main() -> None:
             regardless of the run's dry-run setting — it is an explicit,
             after-the-fact correction.
             """
+            if _refuse_if_writing(self, "apply these corrections"):
+                return
             written = 0          # rows applied
             files_written = 0    # files actually touched
             romanized = 0
             errors: list[str] = []
             role = self._disc_data_role
+            _write_guard.acquire(_TAG_EDIT_WRITER)
             QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
             try:
                 for item, a in entries:
@@ -3534,6 +3661,7 @@ def gui_main() -> None:
                                  else os.path.basename(a.get("path", "")))
                         errors.append(f"{label} ({where}): {exc}")
             finally:
+                _write_guard.release(_TAG_EDIT_WRITER)
                 QtWidgets.QApplication.restoreOverrideCursor()
 
             # Drop applied rows from the actionable set.
@@ -3569,6 +3697,8 @@ def gui_main() -> None:
             self._worker: _RomanizeWorker | None = None
             self._results: list[dict] = []
             self._dirs: list[str] = []
+            # See WikiTaggerTab.
+            self._shutting_down = False
             # See WikiTaggerTab for rationale.
             self._was_cancelled: bool = False
 
@@ -3856,6 +3986,8 @@ def gui_main() -> None:
         def _start_romanizing(self) -> None:
             if self._worker is not None and self._worker.isRunning():
                 return
+            if _refuse_if_writing(self, "romanise these albums"):
+                return
 
             dirs: list[str] = []
             for row in range(self._table.rowCount()):
@@ -3897,6 +4029,7 @@ def gui_main() -> None:
             self._worker.log_message.connect(self._append_log)
             self._worker.album_done.connect(self._on_album_done)
             self._worker.all_done.connect(self._on_all_done)
+            _write_guard.acquire(_ROMANIZE_WRITER)
             self._worker.start()
 
         def _cancel_romanizing(self) -> None:
@@ -3927,8 +4060,29 @@ def gui_main() -> None:
             self._results.append(result)
             self._progress.setValue(self._progress.value() + 1)
 
+        def _show_summary_dialog(self, summary: str) -> None:
+            """Show the romanisation summary in a modal dialog."""
+            dlg = QtWidgets.QDialog(self)
+            dlg.setWindowTitle("Romaniser — Summary")
+            dlg.setMinimumSize(520, 320)
+            dlg.resize(640, 460)
+            dlg_layout = QtWidgets.QVBoxLayout(dlg)
+            text_edit = QtWidgets.QPlainTextEdit(summary)
+            text_edit.setReadOnly(True)
+            text_edit.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+            dlg_layout.addWidget(text_edit, stretch=1)
+            close_btn = QtWidgets.QPushButton("&Close")
+            close_btn.setDefault(True)
+            close_btn.clicked.connect(dlg.accept)
+            btn_layout = QtWidgets.QHBoxLayout()
+            btn_layout.addStretch()
+            btn_layout.addWidget(close_btn)
+            dlg_layout.addLayout(btn_layout)
+            dlg.exec_()
+
         @QtCore.pyqtSlot()
         def _on_all_done(self) -> None:
+            _write_guard.release(_ROMANIZE_WRITER)
             self._run_btn.setEnabled(True)
             self._run_btn.setText("&Romanise All")
             self._cancel_btn.setEnabled(False)
@@ -3937,7 +4091,9 @@ def gui_main() -> None:
             self._worker = None
 
             dry = self._dry_run_cb.isChecked()
-            succeeded = [r for r in self._results if not r["error"]]
+            completed = [r for r in self._results if not r["error"]]
+            succeeded = [r for r in completed if not _has_write_errors(r)]
+            partial = [r for r in completed if _has_write_errors(r)]
             failed    = [r for r in self._results if r["error"]]
 
             lines = []
@@ -3950,14 +4106,22 @@ def gui_main() -> None:
                     f"⏹  Cancelled — processed {processed} of {total} "
                     "album(s) before stopping.\n"
                 )
-            if succeeded:
-                lines.append(
-                    f"Successfully processed {len(succeeded)} album(s):\n"
-                )
+            for albums, bullet, heading in (
+                (succeeded, "✓",
+                 f"Successfully processed {len(succeeded)} album(s):\n"),
+                (partial, "⚠",
+                 f"Finished with write errors — {len(partial)} album(s) "
+                 "stay in the queue for a retry:\n"),
+            ):
+                if not albums:
+                    continue
+                if lines:
+                    lines.append("")
+                lines.append(heading)
                 rm_action = "Would write" if dry else "Wrote"
-                for r in succeeded:
+                for r in albums:
                     lines.append(
-                        f"  ✓ {r['album']}\n"
+                        f"  {bullet} {r['album']}\n"
                         f"      {rm_action}: {r['romanized']} new, "
                         f"{r['overwritten']} overwritten  |  "
                         f"Skipped: {r['skipped']}  |  "
@@ -3966,7 +4130,7 @@ def gui_main() -> None:
                     )
 
             if failed:
-                if succeeded:
+                if succeeded or partial:
                     lines.append("")
                 lines.append(
                     f"Failed to process {len(failed)} album(s):\n"
@@ -3995,33 +4159,20 @@ def gui_main() -> None:
             self._log.appendPlainText(f"\n{'=' * 60}")
             self._log.appendPlainText(summary)
 
-            dlg = QtWidgets.QDialog(self)
-            dlg.setWindowTitle("Romaniser — Summary")
-            dlg.setMinimumSize(520, 320)
-            dlg.resize(640, 460)
-            dlg_layout = QtWidgets.QVBoxLayout(dlg)
-            text_edit = QtWidgets.QPlainTextEdit(summary)
-            text_edit.setReadOnly(True)
-            text_edit.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
-            dlg_layout.addWidget(text_edit, stretch=1)
-            close_btn = QtWidgets.QPushButton("&Close")
-            close_btn.setDefault(True)
-            close_btn.clicked.connect(dlg.accept)
-            btn_layout = QtWidgets.QHBoxLayout()
-            btn_layout.addStretch()
-            btn_layout.addWidget(close_btn)
-            dlg_layout.addLayout(btn_layout)
-            dlg.exec_()
+            if not self._shutting_down:
+                self._show_summary_dialog(summary)
 
             if self._auto_clear_cb.isChecked() and succeeded:
                 # Match successful results to table rows by directory
                 # path, not by index — see WikiTaggerTab._on_all_done
                 # for rationale.  `self._dirs[i]` holds the directory
                 # for result `self._results[i]`.
+                # Albums whose individual writes failed are kept in the
+                # queue for a retry — see _has_write_errors.
                 success_dirs = {
                     self._dirs[i]
                     for i, r in enumerate(self._results)
-                    if not r["error"]
+                    if not r["error"] and not _has_write_errors(r)
                 }
                 rows_to_remove = sorted(
                     (
@@ -4938,6 +5089,9 @@ def gui_main() -> None:
                     self, "Save", "Nothing to save."
                 )
                 return
+            if _refuse_if_writing(self, "save these edits"):
+                return
+            _write_guard.acquire(_TAG_EDIT_WRITER)
 
             errors: list[str] = []
             saved = 0
@@ -4949,6 +5103,10 @@ def gui_main() -> None:
             for filepath, tag_name in list(self._dirty):
                 row = self._find_row_for_filepath(filepath)
                 if row is None:
+                    # The row went away (removed from the queue) — there is
+                    # no edit left to write, so drop it rather than leaving
+                    # a pending change Save can never resolve.
+                    self._dirty.discard((filepath, tag_name))
                     continue
                 col = EDITABLE_TAGS.index(tag_name) + 1
                 cell = self._table.item(row, col)
@@ -4963,12 +5121,18 @@ def gui_main() -> None:
                         (filepath, tag_name)
                     ] = value
                     to_lock.append((filepath, tag_name))
+                    # Only a write that reached disk stops being pending.
+                    # Clearing the whole dirty set would drop the failures
+                    # too: Save could no longer retry them, and the
+                    # close-time warning would no longer mention them.
+                    self._dirty.discard((filepath, tag_name))
                     saved += 1
                 except Exception as e:
                     errors.append(
                         f"{os.path.basename(filepath)} "
                         f"[{tag_name}]: {e}"
                     )
+            _write_guard.release(_TAG_EDIT_WRITER)
 
             if to_lock:
                 tag_locks.set_locks(to_lock, True)
@@ -4976,7 +5140,6 @@ def gui_main() -> None:
                     self._locks[filepath] = tag_locks.locked_tags(filepath)
                 self._table.viewport().update()
 
-            self._dirty.clear()
             self._update_status()
 
             msg = (
@@ -4990,9 +5153,12 @@ def gui_main() -> None:
                 )
             if errors:
                 msg += (
-                    f"\n\n{len(errors)} error(s):\n"
+                    f"\n\n{len(errors)} error(s) — still unsaved, "
+                    f"Save will retry them:\n"
                     + "\n".join(errors)
                 )
+                QtWidgets.QMessageBox.warning(self, "Save", msg)
+                return
             QtWidgets.QMessageBox.information(self, "Save", msg)
 
         # --- Context menu (batch Replace…) ---
@@ -5196,6 +5362,10 @@ def gui_main() -> None:
             self._tabs = tabs
             self._wiki_tab = wiki_tab
             self._romanize_tab = romanize_tab
+            self._stats_tab = stats_tab
+            # True once the close handler has told the workers to stop, so a
+            # second close attempt while they finish doesn't re-ask.
+            self._closing = False
 
             # --- File menu -------------------------------------------
             # Queue management (Add Folders / Remove Selected / Clear
@@ -5774,11 +5944,90 @@ def gui_main() -> None:
                         self._act_clear, self._act_refresh):
                 act.setEnabled(enabled)
 
+        def _running_workers(self) -> list:
+            """Every background worker still running, with a display name.
+
+            Returns ``[(name, tab, worker), …]``.  Each queue tab keeps its
+            worker in ``_worker`` and clears it when the run ends, so a
+            live thread here means real work is still in flight.
+            """
+            candidates = [
+                ("Wiki Tagger", self._wiki_tab),
+                ("Romanise", self._romanize_tab),
+                ("Statistics", self._stats_tab),
+            ]
+            running = []
+            for name, tab in candidates:
+                worker = getattr(tab, "_worker", None) if tab else None
+                if worker is not None and worker.isRunning():
+                    running.append((name, tab, worker))
+            return running
+
+        def _finish_workers(self, running: list) -> None:
+            """Ask the running workers to stop and wait for them to do it.
+
+            A tagging worker is mid-write on someone's music files; letting
+            the interpreter tear its thread down at exit can leave a file
+            half-written.  Each worker already stops cleanly at the next
+            album boundary, so cancel them all and keep the GUI thread
+            pumping events (the workers reach the GUI through queued
+            signals) until every thread has actually returned.
+            """
+            for _name, tab, worker in running:
+                # The run still finishes its current album and reports into
+                # the log; it just skips its summary dialog.
+                if hasattr(tab, "_shutting_down"):
+                    tab._shutting_down = True
+                worker.request_cancel()
+            dialog = QtWidgets.QProgressDialog(
+                "Finishing the current album before closing…",
+                "", 0, 0, self,
+            )
+            dialog.setWindowTitle("Closing")
+            dialog.setWindowModality(QtCore.Qt.ApplicationModal)
+            dialog.setCancelButton(None)
+            dialog.show()
+            try:
+                while any(w.isRunning() for _n, _t, w in running):
+                    QtWidgets.QApplication.processEvents(
+                        QtCore.QEventLoop.AllEvents, 100,
+                    )
+                    for _name, _tab, worker in running:
+                        worker.wait(50)
+            finally:
+                dialog.close()
+
         def closeEvent(
             self, event: QtGui.QCloseEvent   # type: ignore[override]
         ) -> None:
-            """Warn before closing if the Tag Edit tab has unsaved
-            changes — regardless of which tab is currently active."""
+            """Warn before closing while work is unfinished — a running
+            worker or unsaved Tag Edit changes — regardless of which tab
+            is currently active."""
+            running = self._running_workers()
+            if running:
+                if self._closing:
+                    # Already cancelling from an earlier close; just wait.
+                    event.ignore()
+                    return
+                names = ", ".join(name for name, _t, _w in running)
+                reply = QtWidgets.QMessageBox.warning(
+                    self,
+                    "Still running",
+                    f"{names} still running.\n\n"
+                    "Stop after the current album and close?  Closing now "
+                    "would cut a tag write off half-finished.",
+                    QtWidgets.QMessageBox.Ok
+                    | QtWidgets.QMessageBox.Cancel,
+                    QtWidgets.QMessageBox.Cancel,
+                )
+                if reply != QtWidgets.QMessageBox.Ok:
+                    event.ignore()
+                    return
+                self._closing = True
+                try:
+                    self._finish_workers(running)
+                finally:
+                    self._closing = False
             if self._tag_edit_tab.has_unsaved_changes():
                 reply = QtWidgets.QMessageBox.warning(
                     self,
@@ -5790,6 +6039,11 @@ def gui_main() -> None:
                     QtWidgets.QMessageBox.Cancel,
                 )
                 if reply != QtWidgets.QMessageBox.Ok:
+                    # The workers stopped, but the user chose to keep the
+                    # window open. Future runs must show their summaries.
+                    for _name, tab, _worker in running:
+                        if hasattr(tab, "_shutting_down"):
+                            tab._shutting_down = False
                     event.ignore()
                     return
             preferences.update(

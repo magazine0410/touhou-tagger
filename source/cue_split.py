@@ -759,6 +759,26 @@ def _write_track_tags(path: str, num: int, title: str, performer: str,
         log(f"    tag write failed for {os.path.basename(path)}: {exc}")
 
 
+def _free_path(dest: str) -> str:
+    """Return ``dest``, or the first free ``…_split``/``…_split2`` variant.
+
+    A split must never overwrite audio that is already in the folder — the
+    intended name can be taken by the very image being split, by a file left
+    by an earlier run, or by two CUE tracks sharing a title.  Counting up
+    keeps every produced track, where a single fixed suffix would let the
+    second collision clobber the first.
+    """
+    if not os.path.exists(dest):
+        return dest
+    base, ext = os.path.splitext(dest)
+    candidate = f"{base}_split{ext}"
+    n = 1
+    while os.path.exists(candidate):
+        n += 1
+        candidate = f"{base}_split{n}{ext}"
+    return candidate
+
+
 def _trash(path: str, log) -> bool:
     """Move ``path`` to the desktop Trash.  Returns True on success."""
     gio = _which("gio")
@@ -787,9 +807,9 @@ def _check_source(source: CueSource) -> tuple[SplitResult | None, list]:
 
     Returns ``(failure, starts)`` — ``failure`` is a failed
     :class:`SplitResult` (and ``starts`` empty) when the source can't be split
-    safely, else ``None`` plus the derived per-track start times.  Pure check:
-    touches no files, so :func:`split_plan` can validate *every* disc before
-    moving anything.
+    safely, else ``None`` plus the derived per-track start times.  Read-only:
+    it writes nothing (it only reads the image's STREAMINFO header), so
+    :func:`split_plan` can validate *every* disc before moving anything.
     """
     tracks = source.tracks
 
@@ -820,6 +840,22 @@ def _check_source(source: CueSource) -> tuple[SplitResult | None, list]:
             message=("The CUE's track start times aren't increasing, so no "
                      "usable split points could be derived — split aborted, "
                      "original untouched.")), []
+    # The CUE must describe *this* image: a breakpoint at or past the end of
+    # the audio would cut an empty track, which ffmpeg produces happily and
+    # `flac -t` then verifies as clean — so the original could be trashed for
+    # a set of silent stubs.  A zero duration means the header couldn't be
+    # read (not a FLAC, or mutagen missing); leave that to the split itself.
+    image_path = source.image_path
+    duration = _flac_duration(image_path)
+    if duration > 0 and starts[-1] >= duration:
+        return SplitResult(
+            ok=False, reason="breakpoints_past_end",
+            message=(
+                f"The CUE's last track starts at {starts[-1]:.1f}s but "
+                f"{os.path.basename(image_path)} is only {duration:.1f}s "
+                "long, so the split would produce empty tracks — the CUE "
+                "probably belongs to a different file. Split aborted, "
+                "original untouched.")), []
     return None, starts
 
 
@@ -879,7 +915,9 @@ def split_album(source: CueSource, *, dry_run: bool = False,
                              f"{proc.stderr.strip()[:800]}"))
             produced.append(out)
 
-        # --- 4. Decode-verify every output (catches corruption). -----------
+        # --- 4. Decode-verify every output (catches corruption), and check
+        # it actually holds audio: an empty track decodes cleanly, so the
+        # decode test alone would pass a set of silent stubs. ---------------
         for f in produced:
             v = subprocess.run([flac, "-st", f], capture_output=True)
             if v.returncode != 0:
@@ -887,6 +925,15 @@ def split_album(source: CueSource, *, dry_run: bool = False,
                     ok=False, reason="decode_failed",
                     message=(f"Verification failed: {os.path.basename(f)} did "
                              "not decode cleanly — aborted, original kept."))
+            # Any positive duration is valid, including very short indexed
+            # tracks. Only an output with no audio must fail verification.
+            if _flac_duration(f) <= 0:
+                return SplitResult(
+                    ok=False, reason="empty_track",
+                    message=(f"Verification failed: track "
+                             f"{os.path.basename(f)} came out empty, so the "
+                             "CUE's split points don't fit this file — "
+                             "aborted, original kept."))
 
         # --- 5. Tag from our own decoded CUE, rename to "NN - Title.flac",
         # and move into the album dir.  Tags are written with mutagen (not
@@ -898,10 +945,7 @@ def split_album(source: CueSource, *, dry_run: bool = False,
                 return SplitResult(
                     ok=False, reason="mojibake",
                     message="A split filename came out garbled — aborted.")
-            dest = os.path.join(music_dir, fname)
-            if os.path.exists(dest):
-                base, ext = os.path.splitext(dest)
-                dest = f"{base}_split{ext}"
+            dest = _free_path(os.path.join(music_dir, fname))
             shutil.move(src, dest)
             _write_track_tags(dest, num, title, perf, source.album,
                               source.album_performer, log,

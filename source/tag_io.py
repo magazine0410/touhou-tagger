@@ -396,45 +396,46 @@ def clear_grouping(filepath: str, dry_run: bool = False) -> None:
 
     Used when a re-scan identifies a track as an original composition
     but the file already carries a stale grouping value from an earlier
-    (possibly incorrect) tagging run.  Silently does nothing if the
-    file has no grouping tag or if the format is unsupported.
+    (possibly incorrect) tagging run.  Does nothing if the file has no
+    grouping tag or if the format is unsupported.
+
+    A failure to write the file is raised, not swallowed — the caller
+    counts it as an error rather than reporting a cleared tag that is
+    still on disk.
     """
     if dry_run:
         return
 
     ext = os.path.splitext(filepath)[1].lower()
-    try:
-        if ext == ".mp3":
-            try:
-                tags = ID3(filepath)
-            except ID3NoHeaderError:
-                return
-            if "TIT1" in tags:
-                del tags["TIT1"]
-                tags.save(filepath)
-        elif ext == ".flac":
-            f = FLAC(filepath)
-            if "grouping" in f:
-                del f["grouping"]
-                f.save()
-        elif ext == ".ogg":
-            f = OggVorbis(filepath)
-            if "grouping" in f:
-                del f["grouping"]
-                f.save()
-        elif ext == ".opus":
-            f = OggOpus(filepath)
-            if "grouping" in f:
-                del f["grouping"]
-                f.save()
-        elif ext == ".m4a":
-            f = MP4(filepath)
-            key = "----:com.apple.iTunes:GROUPING"
-            if key in f:
-                del f[key]
-                f.save()
-    except Exception:
-        pass
+    if ext == ".mp3":
+        try:
+            tags = ID3(filepath)
+        except ID3NoHeaderError:
+            return
+        if "TIT1" in tags:
+            del tags["TIT1"]
+            tags.save(filepath)
+    elif ext == ".flac":
+        f = FLAC(filepath)
+        if "grouping" in f:
+            del f["grouping"]
+            f.save()
+    elif ext == ".ogg":
+        f = OggVorbis(filepath)
+        if "grouping" in f:
+            del f["grouping"]
+            f.save()
+    elif ext == ".opus":
+        f = OggOpus(filepath)
+        if "grouping" in f:
+            del f["grouping"]
+            f.save()
+    elif ext == ".m4a":
+        f = MP4(filepath)
+        key = "----:com.apple.iTunes:GROUPING"
+        if key in f:
+            del f[key]
+            f.save()
 
 
 def _set_tag(
@@ -594,60 +595,61 @@ def _delete_tag(
     """Remove a single tag from a file.  Returns True if a value was removed.
 
     ``tag_name`` is the Vorbis comment name; it is translated to the
-    appropriate frame/atom key for MP3 and M4A.  Used to retire the
-    ``albumartistsort`` field once its romanized value has been migrated
-    into ``albumartist``.  Silently no-ops on unsupported formats or absent
-    tags.
+    appropriate frame/atom key for MP3 and M4A.  Returns False (no removal
+    needed) for an unsupported format, an unmapped tag name, or a tag the
+    file doesn't carry.
+
+    A failure to *write* the file — a read-only file, a full disk, a
+    corrupt header — is raised, not swallowed: the caller has to be able to
+    tell "there was nothing to remove" from "the removal did not happen",
+    or it reports a cleared tag that is still on disk.
     """
     ext = os.path.splitext(filepath)[1].lower()
-    try:
-        if ext == ".mp3":
-            try:
-                tags = ID3(filepath)
-            except ID3NoHeaderError:
-                return False
-            frame_id = _TAG_MAP_ID3.get(tag_name)
-            if not frame_id:
-                return False
-            removed = False
-            if frame_id.startswith("TXXX:"):
-                desc = frame_id[5:]
-                for frame in list(tags.getall("TXXX")):
-                    if frame.desc == desc:
-                        if not dry_run:
-                            tags.delall(f"TXXX:{desc}")
-                        removed = True
-                        break
-            elif frame_id in tags:
-                if not dry_run:
-                    del tags[frame_id]
-                removed = True
-            if removed and not dry_run:
-                tags.save(filepath)
-            return removed
-        elif ext in (".flac", ".ogg", ".opus"):
-            if ext == ".flac":
-                f = FLAC(filepath)
-            elif ext == ".ogg":
-                f = OggVorbis(filepath)
-            else:
-                f = OggOpus(filepath)
-            if tag_name in f:
-                if not dry_run:
-                    del f[tag_name]
-                    f.save()
-                return True
+    if ext == ".mp3":
+        try:
+            tags = ID3(filepath)
+        except ID3NoHeaderError:
             return False
-        elif ext == ".m4a":
-            f = MP4(filepath)
-            key = _TAG_MAP_M4A.get(tag_name)
-            if key and key in f:
-                if not dry_run:
-                    del f[key]
-                    f.save()
-                return True
+        frame_id = _TAG_MAP_ID3.get(tag_name)
+        if not frame_id:
             return False
-    except Exception:
+        removed = False
+        if frame_id.startswith("TXXX:"):
+            desc = frame_id[5:]
+            for frame in list(tags.getall("TXXX")):
+                if frame.desc == desc:
+                    if not dry_run:
+                        tags.delall(f"TXXX:{desc}")
+                    removed = True
+                    break
+        elif frame_id in tags:
+            if not dry_run:
+                del tags[frame_id]
+            removed = True
+        if removed and not dry_run:
+            tags.save(filepath)
+        return removed
+    elif ext in (".flac", ".ogg", ".opus"):
+        if ext == ".flac":
+            f = FLAC(filepath)
+        elif ext == ".ogg":
+            f = OggVorbis(filepath)
+        else:
+            f = OggOpus(filepath)
+        if tag_name in f:
+            if not dry_run:
+                del f[tag_name]
+                f.save()
+            return True
+        return False
+    elif ext == ".m4a":
+        f = MP4(filepath)
+        key = _TAG_MAP_M4A.get(tag_name)
+        if key and key in f:
+            if not dry_run:
+                del f[key]
+                f.save()
+            return True
         return False
     return False
 

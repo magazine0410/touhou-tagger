@@ -753,6 +753,11 @@ _METADATA_TAGS = frozenset({
     "year", "genre",
 })
 _ARTIST_TAGS = frozenset({"artist", "artistsort"})
+# Every output a TouhouDB lookup can change.  Besides the artist pair it also
+# supplies the official romanizations behind `albumartistsort` and the credit
+# tags (both resolve through the TouhouDB client when one exists), so a run
+# that selects only those must still build the client.
+_TOUHOUDB_TAGS = _ARTIST_TAGS | _CREDIT_TAGS | frozenset({"albumartistsort"})
 
 
 def _effective_selected_tags(selected_tags) -> tuple[str, ...]:
@@ -1031,9 +1036,10 @@ def fetch_album_plan(
 
     selected_tags = _effective_selected_tags(selected_tags)
     # Verification is an optional enrichment path for the TouhouDB-derived
-    # artist outputs.  With neither output selected it cannot affect a file,
-    # so don't perform its network work for a deliberately limited run.
-    use_touhoudb = bool(use_touhoudb and set(selected_tags) & _ARTIST_TAGS)
+    # outputs (the artist pair, albumartistsort, and the credit tags).  With
+    # none of them selected it cannot affect a file, so don't perform its
+    # network work for a deliberately limited run.
+    use_touhoudb = bool(use_touhoudb and set(selected_tags) & _TOUHOUDB_TAGS)
     touhoudb_add_missing = bool(touhoudb_add_missing and use_touhoudb)
     selection_options = _tag_selection_fetch_options(
         selected_tags,
@@ -1742,9 +1748,11 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
     # prevented: a locked tag that would have been skipped anyway is counted.
     locked_skipped = 0
     # Per-track tag change log — each entry is a dict with keys:
-    #   filename, tag, old (str|None), new (str|None)
+    #   filename, path, tag, old (str|None), new (str|None)
     # Populated for every tag that would be written (or cleared/deleted)
-    # so the GUI can show a per-track diff view.
+    # so the GUI can show a per-track diff view.  `path` is the key the view
+    # groups on: two discs of one album routinely hold the same `filename`
+    # ("01 - Intro.flac"), and grouping on that alone merges them.
     tag_changes: list[dict] = []
 
     do_romanize = (
@@ -1796,7 +1804,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
                 try:
                     clear_grouping(fpath, dry_run=dry_run)
                     cleared += 1
-                    tag_changes.append({"filename": fname,
+                    tag_changes.append({"filename": fname, "path": fpath,
                                         "tag": "grouping",
                                         "old": existing, "new": None})
                 except Exception as e:
@@ -1814,7 +1822,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
                 set_grouping(fpath, value, dry_run=dry_run)
                 tagged += 1
                 if existing_grp != value:
-                    tag_changes.append({"filename": fname,
+                    tag_changes.append({"filename": fname, "path": fpath,
                                         "tag": "grouping",
                                         "old": existing_grp,
                                         "new": value})
@@ -1874,7 +1882,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
                     print(f"  [META]      {fname}  "
                           f"{meta_tag} = {meta_val}")
                     meta_wrote += 1
-                    tag_changes.append({"filename": fname,
+                    tag_changes.append({"filename": fname, "path": fpath,
                                         "tag": meta_tag,
                                         "old": None, "new": meta_val})
                 except Exception as exc:
@@ -1912,7 +1920,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
                             print(f"  [META]      {fname}  "
                                   f"genre = {genre_disp}")
                         meta_wrote += 1
-                        tag_changes.append({"filename": fname,
+                        tag_changes.append({"filename": fname, "path": fpath,
                                             "tag": "genre",
                                             "old": old_disp,
                                             "new": genre_disp})
@@ -1939,7 +1947,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
                             print(f"  [META]      {fname}  "
                                   f"album = {new_album}")
                         meta_wrote += 1
-                        tag_changes.append({"filename": fname,
+                        tag_changes.append({"filename": fname, "path": fpath,
                                             "tag": "album",
                                             "old": existing,
                                             "new": new_album})
@@ -2032,7 +2040,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
                         print(f"  [META]      {fname}  "
                               f"albumartist = {new_aa}")
                     meta_wrote += 1
-                    tag_changes.append({"filename": fname,
+                    tag_changes.append({"filename": fname, "path": fpath,
                                         "tag": "albumartist",
                                         "old": existing_aa,
                                         "new": new_aa})
@@ -2057,7 +2065,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
                         print(f"  [META]      {fname}  "
                               f"albumartistsort = {new_aas}")
                     meta_wrote += 1
-                    tag_changes.append({"filename": fname,
+                    tag_changes.append({"filename": fname, "path": fpath,
                                         "tag": "albumartistsort",
                                         "old": existing_aas,
                                         "new": new_aas})
@@ -2105,7 +2113,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
                         print(f"  [CREDIT]    {fname}  "
                               f"{cred_tag} = {cred_val}")
                     cred_wrote += 1
-                    tag_changes.append({"filename": fname,
+                    tag_changes.append({"filename": fname, "path": fpath,
                                         "tag": cred_tag,
                                         "old": existing or None,
                                         "new": cred_val})
@@ -2161,7 +2169,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
                         print(f"  [ARTIST]    {fname}  "
                               f"artist = {artist_val}")
                         artist_wrote += 1
-                        tag_changes.append({"filename": fname,
+                        tag_changes.append({"filename": fname, "path": fpath,
                                             "tag": "artist",
                                             "old": None,
                                             "new": artist_val})
@@ -2185,7 +2193,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
                         print(f"  [ARTIST]    {fname}  "
                               f"artistsort = {sort_val}")
                         artist_wrote += 1
-                        tag_changes.append({"filename": fname,
+                        tag_changes.append({"filename": fname, "path": fpath,
                                             "tag": "artistsort",
                                             "old": None,
                                             "new": sort_val})
@@ -2215,7 +2223,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
                 print(f"  [ROMANIZE]  {fname}")
                 print(f"              titlesort = {rm['titlesort_new']}")
                 romanized += 1
-                tag_changes.append({"filename": fname,
+                tag_changes.append({"filename": fname, "path": fpath,
                                     "tag": "titlesort",
                                     "old": rm.get("titlesort_old"),
                                     "new": rm["titlesort_new"]})
@@ -2224,7 +2232,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
                 print(f"              was = {rm['titlesort_old']}")
                 print(f"              now = {rm['titlesort_new']}")
                 overwritten += 1
-                tag_changes.append({"filename": fname,
+                tag_changes.append({"filename": fname, "path": fpath,
                                     "tag": "titlesort",
                                     "old": rm["titlesort_old"],
                                     "new": rm["titlesort_new"]})
@@ -2316,7 +2324,7 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
                 if wiki_val and wiki_val == existing:
                     continue
                 tag_changes.append({
-                    "filename": fname, "tag": ltag,
+                    "filename": fname, "path": fpath, "tag": ltag,
                     "old": existing or None,
                     "new": wiki_val if wiki_val else None,
                     "locked": True,

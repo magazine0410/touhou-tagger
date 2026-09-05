@@ -38,3 +38,24 @@ class TagIoTests(unittest.TestCase):
     def test_cjk_guard_distinguishes_display_and_romanised_text(self):
         self.assertFalse(tag_io._is_latin_script("上海紅茶館"))
         self.assertTrue(tag_io._is_latin_script("Shanghai Teahouse"))
+
+    def test_delete_tag_reports_absence_but_raises_on_write_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tags.mp3"
+            path.touch()
+            tag_io._set_tag(str(path), "titlesort", "Kachou Fuugetsu")
+
+            # Nothing to remove is False, not a failure.
+            self.assertFalse(tag_io._delete_tag(str(path), "composer"))
+            # A write that cannot happen must not look like a clean delete:
+            # the Tag Edit tab would report the tag as saved and lock it.
+            path.chmod(0o444)
+            try:
+                with self.assertRaises(Exception):
+                    tag_io._delete_tag(str(path), "titlesort")
+            finally:
+                path.chmod(0o644)
+            self.assertEqual(ID3(path)["TSOT"].text, ["Kachou Fuugetsu"])
+
+            self.assertTrue(tag_io._delete_tag(str(path), "titlesort"))
+            self.assertNotIn("TSOT", ID3(path))
