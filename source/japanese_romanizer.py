@@ -48,6 +48,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import csv
+from dataclasses import dataclass
 import os
 import re
 import sys
@@ -164,10 +166,21 @@ def get_install_hint() -> str:
 # ---------------------------------------------------------------------------
 # Detection helpers
 # ---------------------------------------------------------------------------
-_JP_RE = re.compile(
-    r'[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\u3400-\u4DBF\u3005]'
+# Share coverage between detection, segmentation and the reading fallback.
+# The supplementary ranges include rare name characters such as 𠮷.
+_KANJI_CHARS = (
+    r'\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF'
+    r'\U00020000-\U0002FA1F\U00030000-\U0003347F'
+    r'\u3005-\u3007\u303B'
 )
-_KANJI_RE = re.compile(r'[\u4E00-\u9FFF\u3400-\u4DBF]')
+_KANA_CHARS = (
+    r'\u3041-\u3096\u3099-\u309F\u30A1-\u30FA\u30FC-\u30FF'
+    r'\u31F0-\u31FF\uFF66-\uFF9F\U0001B000-\U0001B16F'
+)
+_JP_CHARS = _KANJI_CHARS + _KANA_CHARS
+_JP_RE = re.compile(f'[{_JP_CHARS}]')
+_KANJI_RE = re.compile(f'[{_KANJI_CHARS}]')
+_KANA_ONLY_RE = re.compile(f'[{_KANA_CHARS}]+\\Z')
 
 
 def has_japanese(text: str) -> bool:
@@ -176,17 +189,17 @@ def has_japanese(text: str) -> bool:
 
 
 def _get_reading(feature: str) -> str | None:
-    parts = feature.split(",")
-    pos = parts[0] if parts else ""
+    """Read the surface kana, preserving contractions and inflections.
 
-    if pos in ("動詞", "形容詞", "助動詞"):
-        if len(parts) > 9 and parts[9] not in ("*", ""):
-            return parts[9]
-
-    if len(parts) > 6 and parts[6] not in ("*", ""):
-        return parts[6]
-    if len(parts) > 9 and parts[9] not in ("*", ""):
-        return parts[9]
+    UniDic 2.2+/3.x: kana=20, pron=9, lForm=6.  Features such as
+    fConType contain quoted commas, so splitting on ',' shifts kana's index.
+    Older dictionaries without kana can still supply surface pronunciation;
+    the lemma reading is only a last resort.
+    """
+    parts = next(csv.reader([feature]))
+    for index in (20, 9, 6):
+        if len(parts) > index and parts[index] not in ("*", ""):
+            return parts[index]
     return None
 
 # ---------------------------------------------------------------------------
@@ -206,15 +219,14 @@ def _is_katakana_adjacent(ch: str) -> bool:
 
 
 def _normalize_katakana_okurigana(text: str) -> str:
-    """Convert isolated single katakana characters back to hiragana.
+    """Convert isolated katakana following kanji back to hiragana.
 
     Song titles sometimes use katakana for okurigana or particles as a
     stylistic choice (e.g. 永イ夜ハ空ヲ歩キ instead of 永い夜は空を歩き).
     MeCab expects hiragana okurigana and cannot correctly tokenise these
     titles.  This function detects katakana characters that are *not*
-    adjacent to other katakana (i.e. not part of a multi-character
-    katakana loanword run) and converts them to hiragana so MeCab can
-    process them normally.
+    adjacent to other katakana and immediately follow kanji.  Standalone
+    kana names (ハとヘ) and foreign-word runs retain their original spelling.
 
     ヶ and ヵ are exempted because they appear as single katakana between
     kanji in standard orthography (e.g. 一ヶ月, 関ヶ原).
@@ -231,7 +243,8 @@ def _normalize_katakana_okurigana(text: str) -> str:
         next_kata = (
             i + 1 < len(result) and _is_katakana_adjacent(result[i + 1])
         )
-        if not prev_kata and not next_kata:
+        follows_kanji = i > 0 and bool(_KANJI_RE.fullmatch(text[i - 1]))
+        if follows_kanji and not prev_kata and not next_kata:
             result[i] = chr(cp - 0x60)  # katakana → hiragana offset
     return "".join(result)
 
@@ -243,51 +256,83 @@ _HIRAGANA_LONG_VOWEL_RE = re.compile(
 )
 
 
-def _hiragana_with_chouon_to_katakana(text: str) -> str:
-    """Convert hiragana runs containing ー (chouon) to katakana.
+def _normalize_hiragana_long_vowels(text: str) -> str:
+    """Choose a less fragmented analysis without changing the output spelling.
 
-    The long-vowel mark ー (U+30FC) is fundamentally a katakana feature;
-    its appearance inside a hiragana run is a stylistic indicator that
-    the underlying word is a katakana loanword spelled phonetically in
-    hiragana (e.g. にーと instead of ニート, ふぃーばー instead of
-    フィーバー).
-
-    UniDic has no hiragana entries for foreign loanwords, so MeCab fails
-    to tokenise these runs sensibly — it splits them into fragments that
-    lose the long-vowel association and that the loanword dictionary
-    cannot reassemble.  Converting the entire run to katakana before
-    MeCab sees it lets UniDic and the loanword dictionary recognise the
-    word as a single token.
-
-    A matched run consists of one or more hiragana characters and ー
-    marks surrounding at least one ー.  Pure hiragana sequences with no
-    ー are left untouched, as are non-kana characters on either side of
-    the run.
-
-    Edge case: a hiragana copula like です sitting immediately after a
-    hiragana-with-ー loanword with no intervening character (e.g.
-    にーとです) will be absorbed into the run and converted alongside
-    it, which can lead MeCab to read です as the loanword デス.  This
-    pattern is very rare in song titles, but if encountered, add a
-    _PHRASE_OVERRIDES or _TITLE_OVERRIDES entry to handle it.
+    ー also occurs in native words and beside particles.  Try ordinary vowel
+    spellings and dictionary-confirmed foreign-word spans, rather than turning
+    an entire hiragana sentence into katakana.  All alternatives have the same
+    length; the tokenizer can recover the original kana for the final reading.
+    Work is bounded for unusually long runs, and ties retain the original.
     """
-    def _convert(match: "re.Match[str]") -> str:
-        run = match.group(0)
-        out = []
-        for ch in run:
-            cp = ord(ch)
-            if 0x3041 <= cp <= 0x3096:
-                out.append(chr(cp + 0x60))  # hiragana → katakana offset
-            else:
-                out.append(ch)  # ー stays as ー
-        return "".join(out)
-    return _HIRAGANA_LONG_VOWEL_RE.sub(_convert, text)
+    def normalize_run(match: re.Match[str]) -> str:
+        run = match.group()
+        if len(run) > 64 or not any("ぁ" <= ch <= "ゖ" for ch in run):
+            return run
+        cache: dict[str, list[_Token]] = {}
+
+        def analyze(candidate: str) -> list[_Token]:
+            if candidate not in cache:
+                cache[candidate] = _read_tokens(candidate)
+            return cache[candidate]
+
+        def score(candidate: str) -> tuple[int, int, int]:
+            tokens = analyze(candidate)
+            broken = sum(len(t.surface) for t in tokens if t.unknown or
+                         all(ch in "ーぁぃぅぇぉゃゅょ" for ch in t.surface))
+            return broken, len(tokens), sum(a != b for a, b in zip(run, candidate))
+
+        def expand(candidate: str, alternate: bool) -> str:
+            out = []
+            for i, ch in enumerate(candidate):
+                if ch == "ー" and i and ("ぁ" <= candidate[i - 1] <= "ゖ"
+                                         or candidate[i - 1] == "ー"):
+                    previous = _kana_to_romaji(candidate[:i])
+                    vowel = previous[-1:] if previous else ""
+                    choices = {"a": "あ", "i": "い", "u": "う",
+                               "e": "え" if alternate else "い",
+                               "o": "お" if alternate else "う"}
+                    ch = choices.get(vowel, ch)
+                out.append(ch)
+            return "".join(out)
+
+        original_tokens = analyze(run)
+        if len(original_tokens) == 1 and not original_tokens[0].unknown:
+            return run
+        candidates = [run, expand(run, False), expand(run, True)]
+
+        # MeCab can mark パーティーハ as one unknown word.  Check spans at
+        # the original token boundaries so パーティー can be recognized while
+        # は remains a particle.  Only a single known foreign word qualifies.
+        starts = {0, *(t.start for t in original_tokens)}
+        ends = {len(run), *(t.end for t in original_tokens)}
+        foreign_spans = []
+        for start in sorted(starts):
+            for end in sorted(ends, reverse=True):
+                source = run[start:end]
+                if len(source) < 2 or "ー" not in source:
+                    continue
+                kata = _to_katakana(source)
+                tokens = analyze(kata)
+                if (len(tokens) == 1 and not tokens[0].unknown
+                        and tokens[0].goshu == "外"):
+                    foreign_spans.append((start, end, kata))
+        replaced: set[int] = set()
+        foreign = list(run)
+        for start, end, kata in sorted(foreign_spans,
+                                       key=lambda span: span[0] - span[1]):
+            if not replaced.intersection(range(start, end)):
+                foreign[start:end] = kata
+                replaced.update(range(start, end))
+        candidates.append("".join(foreign))
+        return min(candidates, key=score)
+
+    return _HIRAGANA_LONG_VOWEL_RE.sub(normalize_run, text)
 
 # ---------------------------------------------------------------------------
 # Direct katakana-to-Hepburn romaji table
 # ---------------------------------------------------------------------------
-# Digraphs and extended combinations are checked first via 2-character
-# lookahead; single-character entries cover the basic syllabary.
+# Match the longest combination first, including three-character spellings.
 _KATAKANA_ROMAJI: dict[str, str] = {
     # --- Digraphs (consonant + small ャ/ュ/ョ) ---
     "キャ": "kya", "キュ": "kyu", "キョ": "kyo",
@@ -313,6 +358,16 @@ _KATAKANA_ROMAJI: dict[str, str] = {
     "テュ": "tyu", "デュ": "dyu",
     "イェ": "ye",
     "クヮ": "kwa", "グヮ": "gwa",
+    "クァ": "kwa", "クィ": "kwi", "クェ": "kwe", "クォ": "kwo",
+    "グァ": "gwa", "グィ": "gwi", "グェ": "gwe", "グォ": "gwo",
+    "スィ": "si", "ズィ": "zi",
+    "フャ": "fya", "フョ": "fyo",
+    "フィャ": "fya", "フィュ": "fyu", "フィョ": "fyo",
+    "ティャ": "tya", "ティュ": "tyu", "ティョ": "tyo",
+    "ディャ": "dya", "ディュ": "dyu", "ディョ": "dyo",
+    "ヴャ": "vya", "ヴョ": "vyo",
+    "ヴィャ": "vya", "ヴィュ": "vyu", "ヴィョ": "vyo",
+    "ヷ": "va", "ヸ": "vi", "ヹ": "ve", "ヺ": "vo",
     # --- Basic katakana ---
     "ア": "a",  "イ": "i",  "ウ": "u",  "エ": "e",  "オ": "o",
     "カ": "ka", "キ": "ki", "ク": "ku", "ケ": "ke", "コ": "ko",
@@ -348,55 +403,45 @@ for _r in _KATAKANA_ROMAJI.values():
     if _r and _r[-1] in "aiueo":
         _TRAILING_VOWEL[_r] = _r[-1]
 del _r
+_KANA_MATCH_LENGTHS = tuple(sorted(
+    {len(k) for k in _KATAKANA_ROMAJI}, reverse=True,
+))
+
+
+def _to_katakana(text: str) -> str:
+    text = unicodedata.normalize("NFKC", text)
+    return "".join(chr(ord(ch) + 0x60) if "ぁ" <= ch <= "ゖ" else ch
+                   for ch in text)
+
+
+def _kana_syllable(kana: str, index: int) -> tuple[str, int]:
+    for length in _KANA_MATCH_LENGTHS:
+        syllable = kana[index:index + length]
+        if len(syllable) == length and syllable in _KATAKANA_ROMAJI:
+            return _KATAKANA_ROMAJI[syllable], length
+    return "", 0
 
 
 def _kana_to_romaji(kana: str) -> str:
     """Convert a katakana (or hiragana) string to Hepburn romaji."""
-    # Normalise hiragana to katakana so the table handles both.
-    chars = []
-    for ch in kana:
-        cp = ord(ch)
-        if 0x3041 <= cp <= 0x3096:
-            chars.append(chr(cp + 0x60))
-        else:
-            chars.append(ch)
-    kana = "".join(chars)
+    kana = _to_katakana(kana)
 
     parts: list[str] = []
     last_vowel = ""
     i = 0
     while i < len(kana):
-        # Two-character lookahead for digraphs
-        if i + 1 < len(kana):
-            pair = kana[i:i+2]
-            if pair in _KATAKANA_ROMAJI:
-                r = _KATAKANA_ROMAJI[pair]
-                parts.append(r)
-                if r in _TRAILING_VOWEL:
-                    last_vowel = _TRAILING_VOWEL[r]
-                elif r:
-                    last_vowel = ""
-                i += 2
-                continue
-
         ch = kana[i]
         if ch == "ー":
             # Long vowel mark: repeat the previous vowel
             if last_vowel:
                 parts.append(last_vowel)
+            else:
+                parts.append(ch)  # no known vowel: do not silently lose text
             # last_vowel stays the same
         elif ch == "ッ":
             # Small tsu (gemination): look ahead to the next syllable
             # and prepend the appropriate consonant(s).
-            next_romaji = ""
-            if i + 1 < len(kana):
-                # Check for digraph first
-                if i + 2 < len(kana):
-                    pair = kana[i+1:i+3]
-                    if pair in _KATAKANA_ROMAJI:
-                        next_romaji = _KATAKANA_ROMAJI[pair]
-                if not next_romaji and kana[i+1] in _KATAKANA_ROMAJI:
-                    next_romaji = _KATAKANA_ROMAJI[kana[i+1]]
+            next_romaji, _ = _kana_syllable(kana, i + 1)
             if next_romaji:
                 geminated = _geminate_romaji(next_romaji)
                 # Extract just the prepended consonant(s)
@@ -409,26 +454,20 @@ def _kana_to_romaji(kana: str) -> str:
             # this reading begins with a vowel or y, to disambiguate
             # e.g. コンヤク → "kon'yaku" (not "konyaku" = こにゃく),
             # タンイ → "tan'i" (not "tani" = たに).
-            next_romaji = ""
-            if i + 2 < len(kana):
-                pair = kana[i+1:i+3]
-                if pair in _KATAKANA_ROMAJI:
-                    next_romaji = _KATAKANA_ROMAJI[pair]
-            if not next_romaji and i + 1 < len(kana) \
-                    and kana[i+1] in _KATAKANA_ROMAJI:
-                next_romaji = _KATAKANA_ROMAJI[kana[i+1]]
+            next_romaji, _ = _kana_syllable(kana, i + 1)
             if next_romaji and next_romaji[0] in "aiueoy":
                 parts.append("n'")
             else:
                 parts.append("n")
             last_vowel = ""
-        elif ch in _KATAKANA_ROMAJI:
-            r = _KATAKANA_ROMAJI[ch]
+        elif (syllable := _kana_syllable(kana, i))[1]:
+            r, length = syllable
             parts.append(r)
             if r in _TRAILING_VOWEL:
                 last_vowel = _TRAILING_VOWEL[r]
             elif r:
                 last_vowel = ""
+            i += length - 1
         else:
             # Unknown character (e.g. kanji with no reading) — pass through
             parts.append(ch)
@@ -442,10 +481,28 @@ def _pykakasi_fallback(surface: str) -> str:
     """Use pykakasi to romanise a surface form containing kanji that
     MeCab/UniDic could not provide a reading for.  Returns the surface
     unchanged if pykakasi is not installed."""
+    return _kana_to_romaji(_pykakasi_reading(surface))
+
+
+def _pykakasi_reading(surface: str) -> str:
+    """Get fallback kana; all output goes through our shared Hepburn rules."""
     if not PYKAKASI_AVAILABLE:
         return surface
-    tokens = _kks.convert(surface)
-    return "".join(token["hepburn"] for token in tokens).strip()
+    parts = []
+    offset = 0
+    for token in _kks.convert(surface):
+        original = token.get("orig", "")
+        if not original:
+            continue
+        start = surface.find(original, offset)
+        if start < 0:
+            return surface
+        # pykakasi can omit unsupported characters altogether.  Preserve
+        # every unconverted gap rather than silently shortening a title.
+        parts.extend((surface[offset:start], token.get("kana") or original))
+        offset = start + len(original)
+    parts.append(surface[offset:])
+    return "".join(parts)
 
 
 def _geminate_romaji(word: str) -> str:
@@ -459,194 +516,329 @@ def _geminate_romaji(word: str) -> str:
     if word.startswith("j"):
         return "jj" + word[1:]
     first = word[0] if word else ""
-    if first and first not in "aeiouy":
+    if first and first in "bcdfghjklmnpqrstvwxz":
         return first + word
     return word
 
 # ---------------------------------------------------------------------------
 # MeCab-driven segment romanisation
 # ---------------------------------------------------------------------------
+@dataclass
+class _Token:
+    surface: str
+    original: str
+    reading: str
+    pos: str
+    sub_pos: str
+    goshu: str
+    lemma_reading: str
+    start: int
+    end: int
+    unknown: bool = False
+
+
+def _read_tokens(text: str, original: str | None = None) -> list[_Token]:
+    """Copy MeCab nodes while retaining written spans and surface readings."""
+    original = text if original is None else original
+    tokens: list[_Token] = []
+    offset = 0
+    node = _mecab.parseToNode(text)
+    while node:
+        surface = node.surface
+        if surface:
+            start = text.index(surface, offset)
+            end = start + len(surface)
+            offset = end
+            parts = next(csv.reader([node.feature]))
+            source = original[start:end]
+            reading = _get_reading(node.feature)
+            if _KANA_ONLY_RE.fullmatch(source):
+                # Kana already specifies its reading, including expressive ー
+                # and v/b distinctions that dictionary entries may normalize.
+                reading = _to_katakana(source)
+            elif surface == "々" and tokens:
+                reading = tokens[-1].reading
+            elif not reading:
+                reading = (_pykakasi_reading(source)
+                           if _KANJI_RE.search(source) else source)
+            tokens.append(_Token(
+                surface, source, reading, parts[0],
+                parts[1] if len(parts) > 1 else "",
+                parts[12] if len(parts) > 12 else "",
+                parts[6] if len(parts) > 6 else "",
+                start, end, node.stat == 1,
+            ))
+        node = node.next
+    return tokens
+
+
+# Regular numeral/counter morphology belongs to the engine, independently of
+# title/phrase overrides.  Limit the resolver to counters with reviewed rules.
+# See the Japan Foundation's BTS00010 counter table (教科書を作ろう).
+_COUNTERS = {
+    "本": "ホン", "匹": "ヒキ", "杯": "ハイ", "個": "コ",
+    "回": "カイ", "階": "カイ", "曲": "キョク", "冊": "サツ",
+    "歳": "サイ", "人": "ニン", "月": "ガツ",
+    "ヶ月": "カゲツ", "箇月": "カゲツ", "か月": "カゲツ", "カ月": "カゲツ",
+}
+_NUMERAL_CHARS = "0-9零〇一二三四五六七八九十百千万億"
+_NUMBER_COUNTER_RE = re.compile(
+    rf'(?<![{_NUMERAL_CHARS}.+−-])([{_NUMERAL_CHARS}]+)('
+    + "|".join(sorted(_COUNTERS, key=len, reverse=True)) + ")"
+)
+_DIGIT_VALUES = dict(zip("零〇一二三四五六七八九", (0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9)))
+_DIGIT_READINGS = ("ゼロ", "イチ", "ニ", "サン", "ヨン", "ゴ", "ロク", "ナナ", "ハチ", "キュウ")
+
+
+def _number_value(text: str) -> int | None:
+    digits = "".join(str(_DIGIT_VALUES.get(ch, ch)) for ch in text)
+    if digits.isascii() and digits.isdigit():
+        # Leading zeros are identifiers; do not reinterpret their spelling.
+        return int(digits) if len(digits) <= 12 and not (
+            len(digits) > 1 and digits.startswith("0")) else None
+    total = group = 0
+    pending = ""
+    last_small, last_large = 10000, 10**12
+    for ch in digits:
+        if ch in "0123456789":
+            pending += ch
+            if len(pending) > 4:
+                return None
+            continue
+        unit = {"十": 10, "百": 100, "千": 1000, "万": 10000, "億": 10**8}.get(ch)
+        if unit is None:
+            return None
+        if unit < 10000:
+            if unit >= last_small:
+                return None
+            group += int(pending or "1") * unit
+            last_small = unit
+        else:
+            if unit >= last_large:
+                return None
+            total += (group + int(pending or "0") or 1) * unit
+            group, last_small, last_large = 0, 10000, unit
+        pending = ""
+    value = total + group + int(pending or "0")
+    return value if value < 10**12 else None
+
+
+def _number_reading(number: int) -> str:
+    if number < 10:
+        return _DIGIT_READINGS[number]
+    for unit, kana in ((10**8, "オク"), (10000, "マン"), (1000, "セン"),
+                       (100, "ヒャク"), (10, "ジュウ")):
+        if number >= unit:
+            count, remainder = divmod(number, unit)
+            if unit == 1000 and count in (3, 8):
+                head = {3: "サンゼン", 8: "ハッセン"}[count]
+            elif unit == 100 and count in (3, 6, 8):
+                head = {3: "サンビャク", 6: "ロッピャク", 8: "ハッピャク"}[count]
+            else:
+                head = ("" if count == 1 and unit < 10000 else _number_reading(count)) + kana
+            return head + (_number_reading(remainder) if remainder else "")
+    raise ValueError("Unsupported number")
+
+
+def _counter_reading(number: int, counter: str) -> str | None:
+    stem = _number_reading(number)
+    tail = _COUNTERS[counter]
+    if counter == "月":
+        if not 1 <= number <= 12:
+            return None
+        stem = {4: "シ", 7: "シチ", 9: "ク"}.get(number, stem)
+    elif counter == "人":
+        if number in (1, 2):
+            return {1: "ヒトリ", 2: "フタリ"}[number]
+        if stem.endswith("ヨン"):
+            stem = stem[:-2] + "ヨ"
+    elif counter == "歳" and number == 20:
+        return "ハタチ"
+    elif tail[0] in "ホヒハカキコサ":
+        # 1/8/10 before h/k/s; 6 and hundreds before h/k only.
+        endings = ["イチ", "ハチ", "ジュウ"]
+        if tail[0] in "ホヒハカキコ":
+            endings += ["ロク", "ヒャク", "ビャク", "ピャク"]
+        for ending in endings:
+            if stem.endswith(ending):
+                stem = stem[:-1] + "ッ"
+                break
+        if counter in ("本", "匹", "杯"):
+            if stem.endswith("ッ"):
+                tail = {"本": "ポン", "匹": "ピキ", "杯": "パイ"}[counter]
+            elif stem.endswith(("サン", "セン", "ゼン", "マン")):
+                tail = {"本": "ボン", "匹": "ビキ", "杯": "バイ"}[counter]
+        elif counter == "階" and stem.endswith("サン"):
+            tail = "ガイ"
+    return stem + tail
+
+
+def _number_counter_spans(segment: str, tokens: list[_Token]) -> dict[int, tuple[int, str]]:
+    """Resolve complete token spans; never take 曲 out of 曲線, for example.
+
+    Recognized counters are read as units, including Arabic-written 1人/2人.
+    Standalone digits, version labels, decimals and unhandled units keep their
+    spelling.  Phrase overrides are applied before these spans are consumed.
+    """
+    starts = {token.start: i for i, token in enumerate(tokens)}
+    ends = {token.end: i + 1 for i, token in enumerate(tokens)}
+    spans = {}
+    for match in _NUMBER_COUNTER_RE.finditer(segment):
+        if match.start() not in starts or match.end() not in ends:
+            continue
+        start, end = starts[match.start()], ends[match.end()]
+        # 千曲 is also the place name Chikuma.  Keep dictionary-recognized
+        # proper names and ordinal constructions (第一人者) out of counting.
+        if any(t.sub_pos == "固有名詞" for t in tokens[start:end]):
+            continue
+        if start and tokens[start - 1].surface == "第":
+            continue
+        value = _number_value(match[1])
+        if value is not None:
+            reading = _counter_reading(value, match[2])
+            if reading:
+                spans[start] = end, reading
+    return spans
+
+
+@dataclass
+class _RenderedWord:
+    tokens: list[_Token]
+    text: str
+    reading: str
+    opaque: bool = False  # a reviewed replacement is already romanized
+
+
+def _loanword_match(tokens: list[_Token]) -> str | None:
+    if any(t.pos == "助詞" for t in tokens):
+        return None
+    keys = [_kana_to_romaji("".join(t.reading for t in tokens)),
+            "".join(_kana_to_romaji(t.reading) for t in tokens)]
+    # Retain compatibility with foreign-word keys built from older UniDic
+    # lemma spellings (e.g. ボヤージュ / ヴォヤージュ), without normalizing
+    # native colloquial words such as あたし back into their lemmas.
+    if all(t.goshu == "外" for t in tokens):
+        keys.append("".join(_kana_to_romaji(t.lemma_reading) for t in tokens))
+    for key in keys:
+        if key.lower().strip() in _LOANWORDS_MAP:
+            return _LOANWORDS_MAP[key.lower().strip()]
+    return None
+
+
 def _japanese_segment_to_romaji(
     segment: str, first_in_title: bool = False,
 ) -> str:
-    """
-    Convert a Japanese-only text segment to Romaji with token-level
-    awareness (POS, particles, gemination, ん boundaries, etc.).
-    """
-    _INFLECTING = {"動詞", "形容詞", "助動詞"}
-
-    tokens = []
-    conjunctive_particle_indices = set()
-    node = _mecab.parseToNode(segment)
-    while node:
-        surface = node.surface
-        if not surface:
-            node = node.next
-            continue
-        feat_parts = node.feature.split(",")
-        pos = feat_parts[0]
-        sub_pos = feat_parts[1] if len(feat_parts) > 1 else ""
-
-        if surface == "々" and tokens:
-            tokens.append((tokens[-1][0], tokens[-1][1], "々"))
-            node = node.next
-            continue
-
-        # Nakaguro (・) is a word separator in katakana loanwords
-        # (e.g. ヘクセン・タンツ).  Skip it so the surrounding tokens
-        # remain adjacent for multi-token loanword matching, and the
-        # normal inter-token space in the assembly step takes its place.
-        if surface == "・":
-            node = node.next
-            continue
-
-        reading = _get_reading(node.feature)
-        if not reading or reading == "*":
-            if _KANJI_RE.search(surface):
-                romaji = _pykakasi_fallback(surface)
-            else:
-                romaji = _kana_to_romaji(surface)
-        else:
-            romaji = _kana_to_romaji(reading)
-
-        if romaji:
-            if pos == "助詞" and sub_pos == "接続助詞":
-                conjunctive_particle_indices.add(len(tokens))
-            tokens.append((romaji, pos, surface))
-        node = node.next
-
-    if not tokens:
-        return ""
-
-    cased: list[str | None] = [None] * len(tokens)
-    skip_indices: set[int] = set()
-
-    # --- Phrase-level overrides (token-based, longest-first) ---
-    # Matches sequences of 2-6 MeCab surface forms against
-    # _PHRASE_OVERRIDES.  The start token index is added to skip_indices
-    # so the loanword loop cannot overwrite the result.
+    """Analyze readings before applying replacements and word-boundary rules."""
+    analysis = _normalize_hiragana_long_vowels(_normalize_katakana_okurigana(segment))
+    tokens = [t for t in _read_tokens(analysis, segment) if t.surface != "・"]
+    number_spans = _number_counter_spans(segment, tokens)
+    phrase_spans: dict[int, tuple[int, str]] = {}
+    reserved: set[int] = set()
     i = 0
     while i < len(tokens):
-        matched = False
         for span in (6, 5, 4, 3, 2):
-            if i + span <= len(tokens):
-                surfaces = tuple(tokens[i + j][2] for j in range(span))
-                if surfaces in _PHRASE_OVERRIDES:
-                    cased[i] = _PHRASE_OVERRIDES[surfaces]
-                    skip_indices.update(range(i, i + span))
-                    matched = True
-                    i += span
-                    break
-        if not matched:
-            i += 1
-
-    # --- Multi-token loanword matching (POS-safe, longest-first) ---
-    for i, (word, pos, surface) in enumerate(tokens):
-        if i in skip_indices:
-            continue
-
-        lower = word.lower().strip()
-        merged = False
-
-        if pos != "助詞":
-            for span in (4, 3, 2):
-                if i + span <= len(tokens):
-                    if any((i + j) in skip_indices for j in range(1, span)):
-                        continue
-                    if any(tokens[i + j][1] == "助詞" for j in range(span)):
-                        continue
-                    combined = "".join(
-                        tokens[i + j][0] for j in range(span)
-                    ).lower().strip()
-                    if combined in _LOANWORDS_MAP:
-                        cased[i] = _LOANWORDS_MAP[combined]
-                        skip_indices.update(range(i + 1, i + span))
-                        merged = True
-                        break
-
-        if merged:
-            continue
-
-        # Single-token processing
-        if lower in _LOANWORDS_MAP:
-            cased[i] = _LOANWORDS_MAP[lower]
-        elif i == 0:
-            if pos == "助詞":
-                # Phonetic particle conversion applies regardless of
-                # position; only the casing depends on first_in_title.
-                p = (
-                    "wa" if lower == "ha"
-                    else ("e" if lower == "he" else lower)
-                )
-                cased[i] = p.capitalize() if first_in_title else p
-            else:
-                cased[i] = word.capitalize()
-        elif pos == "助詞":
-            cased[i] = (
-                "wa" if lower == "ha"
-                else ("e" if lower == "he" else lower)
-            )
-        elif pos == "接尾辞":
-            cased[i] = lower
-        else:
-            cased[i] = word.capitalize()
-
-    # --- Gemination ---
-    for i in range(len(tokens) - 1):
-        if cased[i + 1] is None:
-            continue
-        if tokens[i][2].endswith(("っ", "ッ")):
-            next_cased = cased[i + 1]
-            if not next_cased:
+            group = tokens[i:i + span]
+            if len(group) != span:
                 continue
-            lower_next = next_cased.lower()
-            geminated_lower = _geminate_romaji(lower_next)
-            if next_cased[0].isupper():
-                cased[i + 1] = geminated_lower.capitalize()
-            else:
-                cased[i + 1] = geminated_lower
-
-    # --- Assembly with apostrophe handling for ん across boundaries ---
-    result = ""
-    for i, (cased_word, (_, pos, surface)) in enumerate(zip(cased, tokens)):
-        if cased_word is None:
+            replacement = None
+            for surfaces in (tuple(t.surface for t in group),
+                             tuple(t.original for t in group)):
+                if surfaces in _PHRASE_OVERRIDES:
+                    replacement = _PHRASE_OVERRIDES[surfaces]
+                    break
+            if replacement is not None:
+                phrase_spans[i] = i + span, replacement
+                reserved.update(range(i, i + span))
+                i += span - 1
+                break
+        i += 1
+    words: list[_RenderedWord] = []
+    i = 0
+    while i < len(tokens):
+        replacement = None
+        end = i + 1
+        if i in phrase_spans:
+            end, replacement = phrase_spans[i]
+            group = tokens[i:end]
+            words.append(_RenderedWord(group, replacement,
+                                        "".join(t.reading for t in group), True))
+            i = end
             continue
-
-        # Determine whether this token merges with the previous one.
-        merge_with_prev = False
-        if i > 0:
-            if pos == "接尾辞":
-                merge_with_prev = True
-            elif (pos == "助動詞" or i in conjunctive_particle_indices) \
-                    and tokens[i - 1][1] in _INFLECTING:
-                merge_with_prev = True
-
-        if i == 0:
-            result = cased_word
-        elif (
-            i > 0
-            and tokens[i - 1][2].endswith(("ん", "ン"))
-            and cased_word
-            and cased_word[0].lower() in "aeiouy"
-        ):
-            word_to_add = cased_word.lower() if merge_with_prev else cased_word
-            if result.endswith("n"):
-                result = result[:-1]
-                result += "n'" + word_to_add
-            else:
-                result += ("" if merge_with_prev else " ") + word_to_add
-        elif merge_with_prev:
-            result += cased_word.lower()
+        if i in number_spans and not reserved.intersection(range(i, number_spans[i][0])):
+            end, reading = number_spans[i]
+            words.append(_RenderedWord(tokens[i:end], _kana_to_romaji(reading).capitalize(), reading))
+            i = end
+            continue
+        for span in (4, 3, 2, 1):
+            if i + span <= len(tokens) and not reserved.intersection(range(i, i + span)):
+                replacement = _loanword_match(tokens[i:i + span])
+                if replacement is not None:
+                    end = i + span
+                    break
+        group = tokens[i:end]
+        token = tokens[i]
+        reading = "".join(t.reading for t in group)
+        if replacement is None:
+            word = _kana_to_romaji(reading)
+            if token.pos == "助詞":
+                # A literal katakana letter (ハ, ヘ) is not rewritten into a
+                # phonetic particle unless the analysis normalized it.
+                literal_kata = token.original == token.surface and all(
+                    "ァ" <= ch <= "ヺ" for ch in token.original)
+                if literal_kata:
+                    word = word.capitalize()
+                else:
+                    word = {"ha": "wa", "he": "e"}.get(word, word)
+                if i == 0 and first_in_title:
+                    word = word.capitalize()
+            elif token.pos != "接尾辞" or i == 0:
+                word = word.capitalize()
         else:
-            result += " " + cased_word
+            word = replacement
+        words.append(_RenderedWord(group, word, reading, replacement is not None))
+        i = end
 
+    result = ""
+    previous: _RenderedWord | None = None
+    inflecting = {"動詞", "形容詞", "助動詞"}
+    for word in words:
+        current = word.tokens[0]
+        adjacent = previous is not None and previous.tokens[-1].end == current.start
+        merge = bool(adjacent and (
+            current.pos == "接尾辞" or (
+                (current.pos == "助動詞" or current.sub_pos == "接続助詞")
+                and previous.tokens[-1].pos in inflecting)))
+        addition = word.text
+        if adjacent and previous is not None and not previous.opaque and not word.opaque:
+            if previous.reading.endswith(("ッ", "っ")):
+                geminated = _geminate_romaji(addition.lower())
+                if geminated != addition.lower():
+                    addition = geminated
+                    merge = True
+            if (word.reading and set(word.reading) == {"ー"}
+                    and result and result[-1].lower() in "aeiou"):
+                addition = result[-1].lower() * len(word.reading)
+                merge = True
+            if (merge and previous.reading.endswith(("ン", "ん"))
+                    and result.lower().endswith("n") and addition
+                    and addition[0].lower() in "aeiouy"):
+                result += "'"
+        if merge and not word.opaque:
+            addition = addition.lower()
+        if result and addition and not merge:
+            result += " "
+        result += addition
+        previous = word
     return result
 
 # ---------------------------------------------------------------------------
 # Segment splitting and final assembly
 # ---------------------------------------------------------------------------
 _JP_SEGMENT_RE = re.compile(
-    r'[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\u3400-\u4DBF\u3005]+'
+    # Bring adjoining numbers into Japanese analysis, but leave ASCII names
+    # such as R2-D2 and 2024ver intact.  Digits alone never form a segment.
+    rf'(?:[{_JP_CHARS}・]+|(?<![A-Za-z0-9_.+−-])[0-9]+(?=[{_JP_CHARS}]))'
+    rf'(?:[{_JP_CHARS}・]|[0-9]+(?![A-Za-z0-9_]))*'
 )
 
 # A title override describes the base title.  Variant labels and other
@@ -669,6 +861,8 @@ def to_romaji(text: str) -> str:
 
     Non-Japanese segments are preserved verbatim.  If the romaniser is
     not ready (MeCab/UniDic missing) the input is returned unchanged.
+    Recognized numeral/counter expressions are read as words (2人 → Futari);
+    standalone numbers and Latin identifiers retain their spelling.
     Title-level overrides from ``_TITLE_OVERRIDES`` short-circuit conversion
     of the matching base title.  A recognized suffix (such as
     ``[Instrumental]``) is retained and any Japanese in that suffix is
@@ -714,9 +908,6 @@ def to_romaji(text: str) -> str:
         return override_romaji + leading + (
             to_romaji(middle) + trailing if middle else trailing
         )
-
-    text = _hiragana_with_chouon_to_katakana(text)
-    text = _normalize_katakana_okurigana(text)
 
     result_parts: list[str] = []
     last_end = 0

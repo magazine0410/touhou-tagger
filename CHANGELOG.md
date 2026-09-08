@@ -30,6 +30,9 @@ Removed, or Security; do not use this file as a commit-by-commit log.
 
 ### Changed
 
+- Japanese title romanization now reads recognized number/counter expressions
+  as complete words, including Arabic-written forms such as `2人` → `Futari`.
+  Standalone numbers and Latin identifiers keep their spelling.
 - Per-track `arranger`, `vocalist`, and `lyricist` tags now follow the same
   romanization resolver as the sort fields, so TouhouDB's official name is
   used where it has one. TouhouDB remains opt-in; without it the credits keep
@@ -37,6 +40,14 @@ Removed, or Security; do not use this file as a commit-by-commit log.
 
 ### Fixed
 
+- Romanization preserves surface readings such as `あたし` → `Atashi` and
+  `やっぱり` → `Yappari`, handles counter sound changes, and joins small-っ
+  and syllabic-ん boundaries using readings instead of written kanji.
+- Stylized kana analysis retains particles and expressive long vowels;
+  standalone katakana letters are no longer converted indiscriminately.
+  Extended kana combinations and half-width/rare-kanji detection are covered
+  consistently, and pykakasi fallbacks use the same Hepburn rules while
+  preserving characters the fallback cannot read.
 - Per-track `arranger`, `vocalist`, and `lyricist` tags no longer show the
   artist's circle instead of the artist. THBWiki's Staff section lists
   `[Artist, Circle, Tracks]`, and the second column was being read as a
