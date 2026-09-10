@@ -40,6 +40,28 @@ Removed, or Security; do not use this file as a commit-by-commit log.
 
 ### Fixed
 
+- Romanizer title overrides also match delimited titles in annotations;
+  reviewed Japanese spelling aliases handle selected Chinese character
+  variants without globally converting Chinese text. Added supported rare
+  readings and preserved intentional `〇` masking inside Japanese words.
+- Romanizer file tagging now assumes Japanese for Han-only titles, with
+  explicit Chinese title/directory exclusions and Chinese-language markers
+  preserving existing tags. Reviewed Chinese soundtrack directories are
+  excluded without inferring language from artist nationality.
+- Reviewed Chinese titles can also be excluded within a specific circle/album
+  directory pair, including disc subfolders. The unresolved-title review adds
+  matches covering 421 recorded files across 41 release entries while keeping
+  Japanese neighbors and the same titles on other releases eligible.
+- Incomplete title romanizations containing Han/kana characters are now
+  reported as unresolved and never written to `titlesort`, even with force
+  overwrite. Known Japanese and simplified-Chinese title spellings for
+  `少女綺想曲`, `二色蓮花蝶`, and `有頂天変` have explicit reading overrides.
+- The explanatory contraction `なんだ` now joins as `Nanda`, keeping final
+  particles separate (`なんだよ` → `Nanda yo`). The rule requires matching
+  grammatical tokens and preserves explicit gaps and reviewed replacements.
+- Classical adjective endings such as `儚き` now join as `Hakanaki` when
+  MeCab splits an adjective stem from a directly adjacent hiragana `き`.
+  The repair does not cross whitespace, punctuation, or reviewed replacements.
 - Romanization preserves surface readings such as `あたし` → `Atashi` and
   `やっぱり` → `Yappari`, handles counter sound changes, and joins small-っ
   and syllabic-ん boundaries using readings instead of written kanji.

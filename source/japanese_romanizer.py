@@ -125,6 +125,32 @@ except (ImportError, SyntaxError):
 
 _LOANWORDS_MAP = {k.strip(): v for k, v in _LOANWORDS.items()}
 
+# Optional in older companion data files.
+try:
+    from japanese_romanizer_data import _TITLE_SPELLING_ALIASES
+except (ImportError, SyntaxError):
+    _TITLE_SPELLING_ALIASES = {}
+
+# Explicit exclusions are independent of spelling aliases.
+try:
+    from japanese_romanizer_data import _NON_JAPANESE_DIRECTORIES, _NON_JAPANESE_TITLES
+except (ImportError, SyntaxError):
+    _NON_JAPANESE_DIRECTORIES = set()
+    _NON_JAPANESE_TITLES = set()
+
+# Mixed-language releases need exclusions scoped to both release and title.
+# Keep this optional independently, for compatibility with older data files.
+try:
+    from japanese_romanizer_data import _NON_JAPANESE_RELEASE_TITLES
+except (ImportError, SyntaxError):
+    _NON_JAPANESE_RELEASE_TITLES = {}
+
+_NON_JAPANESE_RELEASE_TITLES_MAP = {
+    tuple(unicodedata.normalize("NFKC", part).casefold() for part in release):
+        frozenset(unicodedata.normalize("NFKC", title) for title in titles)
+    for release, titles in _NON_JAPANESE_RELEASE_TITLES.items()
+}
+
 # ---------------------------------------------------------------------------
 # Constants used by the file-scanning helpers
 # ---------------------------------------------------------------------------
@@ -535,6 +561,7 @@ class _Token:
     start: int
     end: int
     unknown: bool = False
+    conjugation_form: str = ""
 
 
 def _read_tokens(text: str, original: str | None = None) -> list[_Token]:
@@ -567,6 +594,7 @@ def _read_tokens(text: str, original: str | None = None) -> list[_Token]:
                 parts[12] if len(parts) > 12 else "",
                 parts[6] if len(parts) > 6 else "",
                 start, end, node.stat == 1,
+                conjugation_form=parts[5] if len(parts) > 5 else "",
             ))
         node = node.next
     return tokens
@@ -798,18 +826,47 @@ def _japanese_segment_to_romaji(
         words.append(_RenderedWord(group, word, reading, replacement is not None))
         i = end
 
+    # Join only the explanatory な + ん (contracted の) + だ construction.
+    # Recognize the complete triple before joining either boundary, so a
+    # separator or reviewed replacement anywhere in it prevents the repair.
+    contracted_boundaries: set[int] = set()
+    for index in range(len(words) - 2):
+        group = words[index:index + 3]
+        if any(w.opaque or len(w.tokens) != 1 for w in group):
+            continue
+        na, n, da = (w.tokens[0] for w in group)
+        if (tuple(t.original for t in (na, n, da)) == ("な", "ん", "だ")
+                and tuple(t.surface for t in (na, n, da)) == ("な", "ん", "だ")
+                and na.end == n.start and n.end == da.start
+                and na.pos == da.pos == "助動詞"
+                and na.lemma_reading == da.lemma_reading == "ダ"
+                and na.conjugation_form.split("-", 1)[0] == "連体形"
+                and n.pos == "助詞" and n.sub_pos == "準体助詞"
+                and n.lemma_reading == "ノ"):
+            contracted_boundaries.update((index + 1, index + 2))
+
     result = ""
     previous: _RenderedWord | None = None
     inflecting = {"動詞", "形容詞", "助動詞"}
-    for word in words:
+    for index, word in enumerate(words):
         current = word.tokens[0]
         adjacent = previous is not None and previous.tokens[-1].end == current.start
         merge = bool(adjacent and (
             current.pos == "接尾辞" or (
                 (current.pos == "助動詞" or current.sub_pos == "接続助詞")
                 and previous.tokens[-1].pos in inflecting)))
+        merge = merge or index in contracted_boundaries
         addition = word.text
         if adjacent and previous is not None and not previous.opaque and not word.opaque:
+            # UniDic sometimes splits the classical adjective 儚き into the
+            # adjective stem 儚 and a noun/verb き.  Repair only an exact,
+            # adjacent hiragana ending after an explicitly identified stem;
+            # full adjectives, homophones and reviewed replacements stay out.
+            if (len(previous.tokens) == len(word.tokens) == 1
+                    and previous.tokens[0].pos == "形容詞"
+                    and previous.tokens[0].conjugation_form.split("-", 1)[0] == "語幹"
+                    and current.original == current.surface == "き"):
+                merge = True
             if previous.reading.endswith(("ッ", "っ")):
                 geminated = _geminate_romaji(addition.lower())
                 if geminated != addition.lower():
@@ -847,8 +904,93 @@ _JP_SEGMENT_RE = re.compile(
 # treat an arbitrary alphanumeric continuation as a suffix: a title override
 # must not accidentally match the prefix of a different title.
 _TITLE_OVERRIDE_SUFFIX_CHARS = frozenset(
-    "([{<（［｛【〈《「『-–—~～/:：;；.・"
+    "([{<（［｛【〈《「『-–—~～/:：;；.・)]}>）］｝】〉》」』、,!！?？+＋·"
 )
+_TITLE_OVERRIDE_PREFIX_CHARS = frozenset("([{<（［｛【〈《「『:：;；/／+＋·・、,-–—~～")
+
+
+def _reviewed_title_spans(text: str):
+    """Match complete title bases at delimiters, never inside other words."""
+    entries = {unicodedata.normalize("NFKC", value): (value, False)
+               for value in _TITLE_SPELLING_ALIASES.values()}
+    entries.update({unicodedata.normalize("NFKC", key): (value, False)
+                    for key, value in _TITLE_SPELLING_ALIASES.items()})
+    entries.update({unicodedata.normalize("NFKC", key): (value, True)
+                    for key, value in _TITLE_OVERRIDES.items()})
+    candidates = []
+    for key, (value, is_romaji) in entries.items():
+        if not key:
+            continue
+        start = text.find(key)
+        while start >= 0:
+            end = start + len(key)
+            if ((start == 0 or text[start - 1].isspace()
+                 or text[start - 1] in _TITLE_OVERRIDE_PREFIX_CHARS)
+                    and (end == len(text) or text[end].isspace()
+                         or text[end] in _TITLE_OVERRIDE_SUFFIX_CHARS)):
+                candidates.append((start, end, value, is_romaji))
+            start = text.find(key, start + 1)
+    occupied_end = 0
+    for span in sorted(candidates, key=lambda s: (s[0], -s[1])):
+        if span[0] >= occupied_end:
+            yield span
+            occupied_end = span[1]
+
+
+def _masking_circle_spans(text: str):
+    """Protect word-masking circles; leave numeric/standalone circles unread."""
+    for match in re.finditer("〇+", text):
+        left = text[match.start() - 1:match.start()] if match.start() else ""
+        right = text[match.end():match.end() + 1]
+        numeric = set("0123456789零一二三四五六七八九十百千万億兆第年月日時分秒人本個回冊曲歳円話巻章番")
+        if left in numeric or right in numeric:
+            continue
+        if (_KANA_ONLY_RE.fullmatch(left) or _KANA_ONLY_RE.fullmatch(right)
+                or (len(match.group()) > 1 and (_JP_RE.search(left) or _JP_RE.search(right)))
+                or (_KANJI_RE.search(left) and _KANJI_RE.search(right)
+                    and any(_KANA_ONLY_RE.fullmatch(ch) for ch in text))):
+            yield match.start(), match.end(), match.group(), True
+
+
+def _language_skip_reason(title: str, path: str | None = None) -> str | None:
+    """Assume Japanese unless an explicit exclusion or Chinese marker applies.
+
+    Directory exclusions match whole parent-directory names, not substrings.
+    Release/title exclusions require adjacent circle and album directories,
+    including when the file is nested further inside disc subdirectories.
+    They deliberately do not infer language from artist nationality.
+    """
+    text = unicodedata.normalize("NFKC", title)
+    if text in {unicodedata.normalize("NFKC", t) for t in _NON_JAPANESE_TITLES}:
+        return "skip_non_japanese"
+    if path:
+        parents = [unicodedata.normalize("NFKC", p).casefold()
+                   for p in os.path.dirname(os.path.abspath(path)).split(os.sep)]
+        excluded = {unicodedata.normalize("NFKC", p).casefold()
+                    for p in _NON_JAPANESE_DIRECTORIES}
+        if any(p in excluded for p in parents):
+            return "skip_non_japanese"
+        if any(text in _NON_JAPANESE_RELEASE_TITLES_MAP.get(release, ())
+               for release in zip(parents, parents[1:])):
+            return "skip_non_japanese"
+    for start, end, _, _ in reversed(list(_reviewed_title_spans(text))):
+        text = text[:start] + " " * (end - start) + text[end:]
+    # These Chinese expressions are not evidence for Japanese readings, even
+    # if another part of the title contains kana (e.g. Chinese credits).
+    if any(marker in text for marker in (
+            "你好", "欢迎", "歡迎", "主题曲", "翻自", "交响管乐",
+            "交響管樂", "开场", "開場", "我们", "我們", "你们", "你們",
+            "什么", "甚麼", "怎么", "怎麼", "这里", "這裡", "的故事")):
+        return "skip_non_japanese"
+    return None
+
+
+def _has_unresolved_output(output: str, original: str) -> bool:
+    protected_count = sum(end - start for start, end, _, _ in _masking_circle_spans(
+        unicodedata.normalize("NFKC", original)))
+    if output.count("〇") == protected_count:
+        output = output.replace("〇", "")
+    return not output.strip() or has_japanese(output)
 
 _PUNCTUATION_NO_SPACE = frozenset({
     '.', ',', '!', '?', ':', ';', '"', "'", ')', ']', '}',
@@ -859,6 +1001,9 @@ _PUNCTUATION_NO_SPACE = frozenset({
 def to_romaji(text: str) -> str:
     """Convert a string with Japanese characters to Hepburn romaji.
 
+    This low-level function assumes the caller has identified Japanese text.
+    File tagging assumes Japanese, with explicit Chinese exclusions and
+    Chinese-language marker checks before conversion.
     Non-Japanese segments are preserved verbatim.  If the romaniser is
     not ready (MeCab/UniDic missing) the input is returned unchanged.
     Recognized numeral/counter expressions are read as words (2人 → Futari);
@@ -879,35 +1024,44 @@ def to_romaji(text: str) -> str:
     # Latin/digits (Ａ, １) to ASCII, before any processing.
     text = unicodedata.normalize("NFKC", text)
 
-    # Title-level override on the base title, retaining a variant label or
-    # other annotation after it.  Try longest titles first in case one
-    # override is a prefix of another.
-    for override_title, override_romaji in sorted(
-        _TITLE_OVERRIDES.items(), key=lambda item: len(item[0]), reverse=True
-    ):
-        if not text.startswith(override_title):
-            continue
-        suffix = text[len(override_title):]
-        if suffix and not (
-            suffix[0].isspace()
-            or suffix[0] in _TITLE_OVERRIDE_SUFFIX_CHARS
-        ):
-            continue
+    spans = list(_reviewed_title_spans(text))
+    spans.extend(span for span in _masking_circle_spans(text)
+                 if not any(start < span[1] and end > span[0] for start, end, _, _ in spans))
+    if spans:
+        result = []
+        offset = 0
+        for start, end, value, is_romaji in sorted(spans):
+            result.append(_romanize_fragment(text[offset:start]))
+            # Alias targets are Japanese text, not another alias lookup;
+            # this prevents cycles in an edited companion data file.
+            result.append(value if is_romaji else _romanize_alias_target(value))
+            offset = end
+        result.append(_romanize_fragment(text[offset:]))
+        return "".join(result)
+    return _japanese_text_to_romaji(text)
 
-        if not suffix:
-            return override_romaji
 
-        # Keep leading/trailing whitespace in the annotation, while allowing
-        # any Japanese inside it to use the normal romanisation path.
-        leading_len = len(suffix) - len(suffix.lstrip())
-        trailing_len = len(suffix) - len(suffix.rstrip())
-        leading = suffix[:leading_len]
-        trailing = suffix[len(suffix) - trailing_len:] if trailing_len else ""
-        middle_end = len(suffix) - trailing_len if trailing_len else len(suffix)
-        middle = suffix[leading_len:middle_end]
-        return override_romaji + leading + (
-            to_romaji(middle) + trailing if middle else trailing
-        )
+def _romanize_fragment(text: str) -> str:
+    if not text.strip():
+        return text
+    start = len(text) - len(text.lstrip())
+    end = len(text.rstrip())
+    return text[:start] + _japanese_text_to_romaji(text[start:end]) + text[end:]
+
+
+def _romanize_alias_target(text: str) -> str:
+    if text in _TITLE_OVERRIDES:
+        return _TITLE_OVERRIDES[text]
+    result = []
+    offset = 0
+    for start, end, value, _ in _masking_circle_spans(text):
+        result.extend((_romanize_fragment(text[offset:start]), value))
+        offset = end
+    result.append(_romanize_fragment(text[offset:]))
+    return "".join(result)
+
+
+def _japanese_text_to_romaji(text: str) -> str:
 
     result_parts: list[str] = []
     last_end = 0
@@ -1032,6 +1186,9 @@ def set_titlesort(path: str, value: str, dry_run: bool = False) -> None:
 #   "skip_exists"      — titlesort already set; not forcing
 #   "skip_no_title"    — file has no title tag (and no fallback supplied)
 #   "skip_unchanged"   — romaji output is identical to the existing tag
+#   "skip_unresolved"  — output is empty or still contains Japanese/CJK text
+#   "skip_non_japanese" — Chinese-language evidence; leave the tags alone
+#   "skip_ambiguous_language" — legacy status, retained for report compatibility
 #   "error"            — exception while reading/writing
 #
 # The "title" field in the result is whichever string was actually
@@ -1085,8 +1242,19 @@ def romanize_file(
             result["status"] = "skip_no_japanese"
             return result
 
+        language_skip = _language_skip_reason(title, path)
+        if language_skip:
+            result["status"] = language_skip
+            return result
+
         new_value = to_romaji(title)
         result["titlesort_new"] = new_value
+
+        # Preserve the attempted conversion for diagnostics, but never write
+        # a partial Japanese/CJK result (even into an empty sort tag).
+        if _has_unresolved_output(new_value, title):
+            result["status"] = "skip_unresolved"
+            return result
 
         if existing and existing == new_value:
             # Nothing to do — already correct.
@@ -1193,6 +1361,9 @@ def romanize_files(
             "skip_no_japanese": "[SKIP-NJP]   ",
             "skip_exists":      "[SKIP-EX]    ",
             "skip_unchanged":   "[SKIP-OK]    ",
+            "skip_unresolved":  "[UNRESOLVED] ",
+            "skip_non_japanese": "[NON-JP]    ",
+            "skip_ambiguous_language": "[LANG-REVIEW] ",
             "skip_no_title":    "[NO-TITLE]   ",
             "error":            "[ERROR]      ",
         }.get(status, f"[{status.upper()}] ")
@@ -1220,6 +1391,15 @@ def romanize_files(
         elif status == "skip_unchanged":
             log(f"{indent}{prefix}{track_label}{display_title}  "
                 f"(already correct: {res['titlesort_old']})")
+            summary["skipped"] += 1
+        elif status in {"skip_non_japanese", "skip_ambiguous_language"}:
+            log(f"{indent}{prefix}{track_label}{display_title}")
+            log(f"{indent}             language outside Japanese scope or uncertain; titlesort preserved")
+            summary["skipped"] += 1
+        elif status == "skip_unresolved":
+            log(f"{indent}{prefix}{track_label}{display_title}")
+            log(f"{indent}             incomplete = {res['titlesort_new']}")
+            log(f"{indent}             titlesort preserved")
             summary["skipped"] += 1
         elif status == "skip_no_title":
             log(f"{indent}{prefix}{f.get('filename', '?')}  (no title tag)")

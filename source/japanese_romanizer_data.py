@@ -87,7 +87,8 @@ _LOANWORDS: dict[str, str] = {
     # --- Touhou Project: places ---
     "shanhai":        "Shanghai",
     "gensokyou":      "Gensokyo",
-    "koumakyou":      "Koumakan",
+    "koumakan":       "Koumakan",
+    "koumakyou":      "Koumakyou",
     "hakurei":        "Hakurei",
     "makai":          "Makai",
     "eientei":        "Eientei",
@@ -638,9 +639,248 @@ _LOANWORDS: dict[str, str] = {
     "revarrie":         "Reverie",      # レヴァリエ (track 18) — verify exact plugin key;
                                         # ヴァ = "va" in some plugin tables, "ba" in others
     "parasoru":         "Parasol",      # パラソル (track 19)
+
+    # ============================================================
+    # Official-theme coverage audit
+    # ============================================================
+    # UniDic sometimes emits a different kana reading from the one used by
+    # the existing entry, or keeps a complete English-derived title as one
+    # token. These aliases and compounds keep the established English
+    # spellings without changing the general kanji-reading fallback.
+
+    # Touhou spelling/reading aliases
+    "sanii":           "Sunny",        # サニー (mcd_fairy01_01, mcd_fairy02_01)
+    "jerashii":        "Jealousy",     # ジェラシー (th11_04)
+    "jerii":           "Jelly",        # ジェリー (th17_03)
+    "reitenshii":      "Latency",      # レイテンシー (mcd_08_01)
+    "retorosupekutibu": "Retrospective", # レトロスペクティブ (th095_05)
+    "fantasutikku":    "Fantastic",    # ファンタスティック (th20_14)
+    "antiiku":         "Antique",      # アンティーク (Seihou)
+    "arutimetto":      "Ultimate",     # アルティメット (th07_12)
+    "turuusu":         "Truth",        # トゥルース (th07_12)
+    "enigumatiku":     "Enigmatic",    # エニグマティク (Seihou)
+    "okarutizumu":     "Occultism",    # オカルティズム (th145_16)
+    "obujekuto":       "Object",      # オブジェクト (mcd_07_06)
+    "neitibu":         "Native",      # ネイティブ (th10_15)
+    "dyurahan":        "Dullahan",    # デュラハン (th14_05)
+    "weaurufu":        "Werewolf",    # ウェアウルフ (th14_07)
+    "eerihhi":         "Erich",       # エーリッヒ (Seihou)
+    "ooen":            "Owen",        # オーエン (th06_15)
+    "baajon":          "Version",     # バージョン (unused/century's-end versions)
+    "foo":             "Four",        # フォー (th16_13, th20_08)
+    "foorin":          "Falling",     # フォーリン (Len'en)
+    "shiirudo":        "Shield",      # シールド (Seihou)
+    "shindoroomu":     "Syndrome",    # シンドローム (Len'en)
+    "terasu":          "Terrace",     # テラス (mcd_05_06)
+    "kafe":            "Cafe",        # カフェ (Len'en)
+    "waapu":           "Warp",        # ワープ (Seihou)
+    "geeto":           "Gate",        # ゲート (Seihou)
+    "waarudo":         "World",       # ワールド (Len'en)
+    "mataara":         "Matara",      # マターラ (th16_17)
+    "fureimu":         "Flame",       # フレイム (th145_12)
+    "tiaoietson":      "Diao Ye Zong", # ティアオイエツォン (th07_02)
+    "yuanshen":        "Yuanxian",    # ユアンシェン (th13_05)
+    "tsepeshu":        "Tepes",       # ツェペシュ (th06_12)
+    "tinkaa":          "Tinker",      # ティンカー (mcd_10_02)
+    "kitun":           "Kitten",      # キトゥン (th18_03; MeCab splits キ + トゥン)
+    "booru":           "Ball",        # ボール (th19_01)
+    "puranku":         "Planck",      # プランク (mcd_08_01)
+    "hiiroo":          "Hero",        # ヒーロー (Len'en)
+    "fukku":           "Hook",        # フック (Len'en)
+    "on":              "On",          # オン (Len'en)
+    "demo":             "Demo",        # デモ (Seihou)
+    "neo":              "Neo",         # ネオ (th145_12)
+    "wandaarando":      "Wonderland",  # わんだーらんど (Len'en)
+    "radikaru":         "Radical",     # ラディカル (Len'en)
+    "runatikku":        "Lunatic",     # ルナティック (th165_03)
+
+    # Touhou title compounds that UniDic keeps as one token
+    "arisumaesutera":   "Alice Maestra",       # アリスマエステラ (th04_09)
+    "arutimettoturuusu": "Ultimate Truth",    # アルティメットトゥルース (th07_12)
+    "ekisutorarabu":    "Extra Love",          # エキストララブ (th02_12)
+    "enigumatikudooru": "Enigmatic Doll",      # エニグマティクドール (Seihou)
+    "saakasurevarie":   "Circus Reverie",      # サーカスレヴァリエ (mcd_01_07)
+    "sukairuuin":       "Sky Ruin",            # スカイルーイン (th12_06)
+    "sutaaboudoriimu":  "Starbow Dream",       # スターボウドリーム (mcd_04_01)
+    "furawaringunaito": "Flowering Night",     # フラワリングナイト (th09_04)
+    "pandemonikkupuranetto": "Pandemonic Planet", # パンデモニックプラネット (th15_15)
+    "ruushiddodoriimaa": "Lucid Dreamer",       # ルーシッドドリーマー (th165_02)
+    "ruuneitoerufu":   "Lunate Elf",           # ルーネイトエルフ (th06_04)
+    "serafikkuchikin": "Seraphic Chicken",     # セラフィックチキン (th17_07)
+    "anrokeiteddoheru": "Unlocated Hell",      # アンロケイテッドヘル (th17_08)
+    "bandettoriitekunorojii": "Banditry Technology", # バンデットリィテクノロジー (th18_05)
+    "meipuruwaizu":    "Maple Wise",           # メイプルワイズ (th05_08)
+    "denderaya":        "Dendera",              # デンデラ野 (mcd_04_01)
+    "monoai":           "Mono Eye",             # モノアイ (Len'en)
+    "baaoorudoadamu":   '"Old Adam" Bar',       # バー・オールドアダム (mcd_09_01)
+
+    # Len'en / Seihou title vocabulary
+    "anazaa":           "Another",       # アナザー (Len'en)
+    "ea":               "Air",           # エア・マスター (Len'en)
+    "ekizochikku":      "Exotic",        # エキゾチック (Len'en)
+    "endo":             "End",           # エンド (Len'en)
+    "enpaia":           "Empire",        # エンパイア (Len'en)
+    "enperaa":          "Emperor",       # エンペラー (Len'en)
+    "eejento":          "Agent",         # エージェント (Len'en)
+    "oobaahiito":       "Overheat",      # オーバーヒート (Len'en)
+    "oobaafuroo":       "Overflow",      # オーバーフロー (Len'en)
+    "oobaahooru":       "Overhaul",      # オーバーホール (Len'en)
+    "kiringu":          "Killing",       # キリング (Len'en)
+    "superioru":        "Superior",      # スペリオル (Len'en)
+    "kiipu":            "Keep",          # キープ (Len'en)
+    "hisutorii":        "History",       # ヒストリー (Len'en)
+    "suragu":           "Slug",          # スラグ (Len'en)
+    "daburu":           "Double",        # ダブル (Len'en)
+    "kiipaa":           "Keeper",        # キーパー (Len'en)
+    "chairudo":         "Child",         # チャイルド (Len'en)
+    "nimonikku":        "Mnemonic",      # ニモニック (Len'en)
+    "meranin":          "Melanin",       # メラニン (Len'en)
+    "manee":            "Money",         # マネー (Len'en)
+    "birudaa":          "Builder",       # ビルダー (Len'en)
+    "daun":             "Down",          # ダウン (Len'en)
+    "fuuru":            "Fool",          # フール (Len'en)
+    "akuto":            "Act",           # アクト (Len'en)
+    "za":               "the",           # ザ (Len'en)
+    "kosumosu":         "Cosmos",        # コスモス (Len'en)
+    "mikuro":           "Micro",         # ミクロ (Len'en)
+    "geitsu":           "Gates",         # ゲイツ (Seihou)
+    "getto":            "Get",           # ゲット (Len'en)
+    "afutaa":           "After",         # アフター (Len'en)
+    "kiro":             "Kilo",          # キロ (th15_10)
+
+    # Whole-token and multi-token Len'en / Seihou compounds
+    "dizasutorasujemini": "Disastrous Gemini",  # ディザストラスジェミニ
+    "purimuroozushiva": "Primrose Shiver",      # プリムローズシヴァ
+    "haaseruvusu":      "Herselves",            # ハーセルヴス
+    "haaseruvuzu":      "Herselves",            # ハーセルヴズ
+    "nekuromasutaa":    "Necromaster",          # ネクロマスター
+    "suupaahaniiwa":    "Super Haniwa",         # スーパーハニーワ
+    "rosutojakkupotto": "Lost Jackpot",        # ロストジャックポット
+    "purizumikkuakuseru": "Prismic Accelerator", # プリズミックアクセル
+    "purizumikkudoraibu": "Prismic Drive",      # プリズミックドライブ
+    "diipuweivaa":      "Deep Waiver",           # ディープウェイヴァー
+    "shirukuroodoarisu": "Silk Road Alice",     # シルクロードアリス
+    "taitorudomeido":   "Titled Maid",          # タイトルドメイド
+    "intu・bakkudoa":   "Into Backdoor",        # イントゥ・バックドア
+    "indisuwaarudo":    "In This World",        # インディスワールド
+    "meranininburakku": "Melanin in Black",     # メラニンインブラック
+    "meidoinburakku":   "Made in Black",        # メイドインブラック
+    "afutaaooru":       "After All",            # アフターオール
+    "endoobuhisutorii": "End of History",       # エンドオブヒストリー
+    "kiipuzahisutorii": "Keep the History",     # キープザヒストリー
+    "mukuromansaa":     "Cadaveromancer",        # ムクロマンサー
+    "mikurokosumosu":   "Microcosm",             # ミクロコスモス
+    "ekusutorakushon":  "Extraction",            # エクストラクション
+    "egoerisu":         "Ego Eris",              # エゴエリス
+    "akutozafuuru":     "Act the Fool",          # アクト・ザ・フール
+    "eamasutaa":        "Air Master",            # エア・マスター
+    "gettoradiigou":    "Get Ready... Go!",      # ゲットレディー号
+    "rettsuendogou":    "Let's 'n Go",           # レッツエンド号
+    "tainiishangurira": "Tiny Shangri-La",      # タイニーシャングリラ
+    "ruumuzahisutorii": "Room the History",      # ルームザヒストリー
+    "torioido・toukeatto": "Trioid Toykeat",     # トリオイド・トウケアット
 }
 
 _TITLE_OVERRIDES: dict[str, str] = {
+    # Official Touhou game names.  These are the conventional title
+    # readings, rather than whatever general-purpose MeCab happens to
+    # choose for the same kanji in ordinary prose.  The phrase table below
+    # mirrors these entries for occurrences inside 東方-prefixed titles.
+    "靈異伝": "Reiiden",
+    "封魔録": "Fuumaroku",
+    "夢時空": "Yumejikuu",
+    "幻想郷": "Gensoukyou",
+    "怪綺談": "Kaikidan",
+    "紅魔郷": "Koumakyou",
+    "妖々夢": "Youyoumu",
+    "萃夢想": "Suimusou",
+    "永夜抄": "Eiyashou",
+    "花映塚": "Kaeidzuka",
+    "文花帖": "Bunkachou",
+    "風神録": "Fuujinroku",
+    "緋想天": "Hisouten",
+    "地霊殿": "Chireiden",
+    "星蓮船": "Seirensen",
+    "非想天則": "Hisoutensoku",
+    "ダブルスポイラー": "Double Spoiler",
+    "妖精大戦争": "Yousei Daisensou",
+    "神霊廟": "Shinreibyou",
+    "心綺楼": "Shinkirou",
+    "輝針城": "Kishinjou",
+    "深秘録": "Shinpiroku",
+    "弾幕アマノジャク": "Danmaku Amanojaku",
+    "紺珠伝": "Kanjuden",
+    "憑依華": "Hyouibana",
+    "天空璋": "Tenkuushou",
+    "秘封ナイトメアダイアリー": "Hifuu Nightmare Diary",
+    "鬼形獣": "Kikeijuu",
+    "剛欲異聞": "Gouyoku Ibun",
+    "虹龍洞": "Kouryuudou",
+    "バレットフィリア達の闇市場": "Bulletphilia-tachi no Yami-Ichiba",
+    "獣王園": "Juuouen",
+    "錦上京": "Kinjoukyou",
+    # Gold Rush is the one-stage official exhibition game associated with
+    # Impossible Spell Card, rather than a numbered installment.
+    "ゴールドラッシュ": "Gold Rush",
+
+    # Full 東方-prefixed forms are listed separately because MeCab can give
+    # 東方 a context-dependent reading (e.g. ヒガシカタ or トウボウ).
+    "東方靈異伝": "Touhou Reiiden",
+    "東方封魔録": "Touhou Fuumaroku",
+    "東方夢時空": "Touhou Yumejikuu",
+    "東方幻想郷": "Touhou Gensoukyou",
+    "東方怪綺談": "Touhou Kaikidan",
+    "東方紅魔郷": "Touhou Koumakyou",
+    "東方妖々夢": "Touhou Youyoumu",
+    "東方萃夢想": "Touhou Suimusou",
+    "東方永夜抄": "Touhou Eiyashou",
+    "東方花映塚": "Touhou Kaeidzuka",
+    "東方文花帖": "Touhou Bunkachou",
+    "東方風神録": "Touhou Fuujinroku",
+    "東方緋想天": "Touhou Hisouten",
+    "東方地霊殿": "Touhou Chireiden",
+    "東方星蓮船": "Touhou Seirensen",
+    "東方非想天則": "Touhou Hisoutensoku",
+    "東方神霊廟": "Touhou Shinreibyou",
+    "東方心綺楼": "Touhou Shinkirou",
+    "東方輝針城": "Touhou Kishinjou",
+    "東方深秘録": "Touhou Shinpiroku",
+    "東方紺珠伝": "Touhou Kanjuden",
+    "東方憑依華": "Touhou Hyouibana",
+    "東方天空璋": "Touhou Tenkuushou",
+    "東方鬼形獣": "Touhou Kikeijuu",
+    "東方剛欲異聞": "Touhou Gouyoku Ibun",
+    "東方虹龍洞": "Touhou Kouryuudou",
+    "東方獣王園": "Touhou Juuouen",
+    "東方錦上京": "Touhou Kinjoukyou",
+
+    # Source-supported readings from the ambiguous-title investigation.
+    # Umineko Essence (KNIL-0004):
+    # https://07th-expansion.fandom.com/wiki/Umineko_no_Naku_Koro_ni_Episode.1_Original_Soundtrack_Essence
+    "煉沙回廊": "Rensa Kairou",
+    # Publisher explicitly gives ショウエン セイキツ:
+    # https://www.4gamer.net/games/429/G042972/20180809115/
+    "燋燄誓契": "Shouen Seikitsu",
+    # Known theme bases, including simplified-Chinese spelling aliases.
+    # Keep these scoped to titles; a global character conversion would also
+    # reinterpret Chinese translations as if they were Japanese originals.
+    "少女綺想曲": "Shoujo Kisoukyoku",
+    "少女绮想曲": "Shoujo Kisoukyoku",
+    "二色蓮花蝶": "Nishiki Rengechou",
+    "二色莲花蝶": "Nishiki Rengechou",
+    "有頂天変": "Uchoutenpen",
+    "有顶天变": "Uchoutenpen",
+    "幻想郷の二ッ岩": "Gensokyo no Futatsuiwa",
+    "幻想乡の二ッ岩": "Gensokyo no Futatsuiwa",
+    # 瑰意琦行 is the dictionary expression かいいきこう:
+    # https://yoji.jitenon.jp/yojim/6398
+    "鎮座する瑰意琦行": "Chinza Suru Kaiikikou",
+    "蓬莱の薬 ~死ぬこと無き者達": "Hourai no Kusuri ~Shinu Koto Naki Monotachi",
+    "蓬莱の薬　~死ぬこと无き者达": "Hourai no Kusuri ~Shinu Koto Naki Monotachi",
+    # The artist's own track URL supplies the reading Ama hiki:
+    # https://soundcloud.com/nesarfmollor/amahiki-springs-arrival-heralded-by-the-thunder-of-lightning
+    "雩 - 春の訪れと共に稲妻が鳴り響く":
+        "Amahiki - Haru no Otozure to Tomo ni Inazuma ga Narihibiku",
     # 広有射怪鳥事 — archaic Heian proper noun + unconventional readings
     # 蠢々秋月 — 秋月 read with on'yomi rather than the usual kun'yomi
     "ひもろぎ、むらさきにもえ": "Himorogi, Murasaki ni Moe",
@@ -673,6 +913,84 @@ _TITLE_OVERRIDES: dict[str, str] = {
     "さよなら、夜空": "Sayonara, Yozora",
 }
 
+# Reviewed orthographic variants of Japanese title bases from the library
+# audit. Convert only a complete, delimited match, never all Chinese text.
+# Values deliberately retain Japanese grammar and words: these are spelling
+# aliases, not Chinese translations. Unverified readings such as 橤の想い
+# stay unresolved until there is evidence for the artist's intended reading.
+_TITLE_SPELLING_ALIASES: dict[str, str] = {
+    # Source-supported Japanese identities, reviewed 2026-09-09. These
+    # exact title spellings are intentional exceptions to the language gate;
+    # they do not establish that the same characters in other titles are JP.
+    # Umineko Essence (KNIL-0004), same catalog as 煉沙回廊 above.
+    "蔷薇": "薔薇",
+    "炼沙回廊": "煉沙回廊",
+    "牢狱STRIP": "牢獄STRIP",
+    # IRON ATTACK!, 宇宙とファンタジー:
+    # https://ironattack.theshop.jp/items/5169790
+    "浪漫纪行": "浪漫紀行",
+    # SOUND HOLIC, DARK SLEEPER:
+    # https://shop.akbh.jp/products/2100000044061
+    "百花缭乱": "百花繚乱",
+    # TAMUSIC, TAM3-0233, track 21:
+    # https://www.melonbooks.co.jp/detail/detail.php?product_id=2759939
+    "幽灵乐团 · 幽雅に咲かせ、墨染の桜": "幽霊楽団 · 幽雅に咲かせ、墨染の桜",
+    # 半裸帝国, VI: spelling verified; the event's intended reading is
+    # not documented, so leave pronunciation to the engine rather than
+    # asserting an unverified whole-title romaji override.
+    # https://booth.pm/en/items/2032140
+    "瑠璃色幻想鄉(Live at東方艷騷会Vol.3)": "瑠璃色幻想郷(Live at 東方艶騒会Vol.3)",
+    # 揺蕩夢澪標: https://booth.pm/ja/items/3218990
+    "大神神话传": "大神神話伝",
+    # AramiTama, The Tribe (also in SPECIAL TOHO TECHNO DJ MIX):
+    # https://arami.rdy.jp/disc/tribe.html
+    "沉泥": "沈泥",
+    # 葉月ゆら, ゆらわーるど -Honey Bee-:
+    # https://www.suruga-ya.jp/product/detail/186140782
+    "轮廻": "輪廻",
+    "弦楽四重奏曲第１番ト长调": "弦楽四重奏曲第1番ト長調",
+    "オルガン小曲 第６亿番 ハ短调": "オルガン小曲 第6億番 ハ短調",
+    "眠り死の月の時计": "眠り死の月の時計",
+    "東の国探查": "東の国探査",
+    "梦と现の境界": "夢と現の境界",
+    "流雲に隱れた幻想鄉": "流雲に隠れた幻想郷",
+    "摇蕩う光": "揺蕩う光",
+    "ヴワル魔法図书馆": "ヴワル魔法図書館",
+    "梦の华": "夢の華",
+    "伝說の夢の国": "伝説の夢の国",
+    "君の笑颜": "君の笑顔",
+    "东方の夜明けより": "東方の夜明けより",
+    "闭ざせし云の通い路": "閉ざせし雲の通い路",
+    "メイドと血の懐中时计": "メイドと血の懐中時計",
+    "目覚めし红き王女": "目覚めし紅き王女",
+    "亡き王女の为のセプテット": "亡き王女の為のセプテット",
+    "光阴ナイフの如し": "光陰ナイフの如し",
+    "永远の巫女": "永遠の巫女",
+    "蓬莱の薬　~死ぬこと无き者达": "蓬莱の薬 ~死ぬこと無き者達",
+    "れみりゃのある日のティータイム!!~マリサ乱入编~":
+        "れみりゃのある日のティータイム!!~マリサ乱入編~",
+    "朱蚀マリアージュ": "朱蝕マリアージュ",
+    "進擊せよ、小槌振りて": "進撃せよ、小槌振りて",
+    "マジ〇チ青森產トマト出荷": "マジ〇チ青森産トマト出荷",
+    "幻想乡の夏": "幻想郷の夏",
+    "死灵の夜樱": "死霊の夜桜",
+    "红楼の雨，上海の泪": "紅楼の雨,上海の泪",
+    "末那の呗": "末那の唄",
+    "樱花の呗": "桜花の唄",
+    "信仰は儚き人间の为に": "信仰は儚き人間の為に",
+    "鲜烈の华": "鮮烈の華",
+    "世界を变える風": "世界を変える風",
+    "废狱の唄": "廃獄の唄",
+    "幽灵ちゃんダッシュパンチ": "幽霊ちゃんダッシュパンチ",
+    "暧昧な存在": "曖昧な存在",
+    "涡ノ霧": "渦ノ霧",
+    "夏を飞び越えて": "夏を飛び越えて",
+    "蔷薇と弾丸": "薔薇と弾丸",
+    "赤い明日、绮想の音": "赤い明日、綺想の音",
+    "月背の観测者": "月背の観測者",
+    "兄贵の歌声": "兄貴の歌声",
+}
+
 # Phrase-level overrides: tuple of MeCab surface strings → Romaji.
 # Applied before loanword matching, longest-match-first (up to 4 tokens).
 # Use this when MeCab splits a known compound into pieces that loanword
@@ -681,6 +999,44 @@ _TITLE_OVERRIDES: dict[str, str] = {
 # Example:
 #   ("幻想", "郷"): "Gensokyo",
 _PHRASE_OVERRIDES: dict[tuple, str] = {
+    # Official Touhou game names.  Keep these phrase-level forms in sync
+    # with the bare-title overrides above so 東方-prefixed and embedded game
+    # names use the same conventional readings.
+    ("靈異", "伝"): "Reiiden",
+    ("封", "魔", "録"): "Fuumaroku",
+    ("夢", "時空"): "Yumejikuu",
+    ("東方", "幻想", "郷"): "Touhou Gensoukyou",
+    ("怪", "綺談"): "Kaikidan",
+    ("紅", "魔", "郷"): "Koumakyou",
+    ("萃", "夢想"): "Suimusou",
+    ("永", "夜", "抄"): "Eiyashou",
+    ("花", "映塚"): "Kaeidzuka",
+    ("文", "花", "帖"): "Bunkachou",
+    ("風神", "録"): "Fuujinroku",
+    ("緋想", "天"): "Hisouten",
+    ("地霊", "殿"): "Chireiden",
+    ("星蓮", "船"): "Seirensen",
+    ("非想", "天", "則"): "Hisoutensoku",
+    ("ダブル", "スポイラー"): "Double Spoiler",
+    ("妖精", "大", "戦争"): "Yousei Daisensou",
+    ("神", "霊廟"): "Shinreibyou",
+    ("心", "綺", "楼"): "Shinkirou",
+    ("輝", "針", "城"): "Kishinjou",
+    ("深", "秘録"): "Shinpiroku",
+    ("弾幕", "アマノジャク"): "Danmaku Amanojaku",
+    ("紺", "珠", "伝"): "Kanjuden",
+    ("憑依", "華"): "Hyouibana",
+    ("天空", "璋"): "Tenkuushou",
+    ("秘", "封", "ナイトメア", "ダイアリー"): "Hifuu Nightmare Diary",
+    ("鬼形", "獣"): "Kikeijuu",
+    ("剛", "欲", "異聞"): "Gouyoku Ibun",
+    ("虹", "龍", "洞"): "Kouryuudou",
+    ("バレット", "フィリア", "達", "の", "闇", "市場"):
+        "Bulletphilia-tachi no Yami-Ichiba",
+    ("獣王", "園"): "Juuouen",
+    ("錦", "上京"): "Kinjoukyou",
+    ("ゴールド", "ラッシュ"): "Gold Rush",
+
     ("幻想", "郷"): "Gensokyo",
     ("妖", "々", "夢"): "Youyoumu",
     ("妖", "々", "跋扈"): "Youyou Bakko",
@@ -721,6 +1077,573 @@ _PHRASE_OVERRIDES: dict[tuple, str] = {
     # T03 subtitle
     ("狐", "憑"):           "Kitsunehyou",      # compound noun split
 
+    # Murasa is a proper-name ending; UniDic tags the final サ as a particle.
+    ("ムラ", "サ"):         "Murasa",            # キャプテン・ムラサ
+
     # T10 subtitle — yojijukugo read as all on'yomi
     ("前", "退", "後", "進"):    "Zentaikoushin",    # 前 misread as "mae"
+}
+
+# Explicit non-Japanese exceptions to the default-Japanese file-tagging policy.
+# Whole parent-directory names, case-insensitive; applies to all descendants.
+# These identify reviewed Chinese soundtrack releases, not artist nationality.
+_NON_JAPANESE_DIRECTORIES: set[str] = {
+    "Mystia's Izakaya",
+    "Touhou Mystia's Izakaya OST1",
+    "Touhou Mystia's Izakaya OST2",
+    "Touhou Mystia's Izakaya OST3",
+    "东方光耀夜 ~ Touhou Lost Branch of Legend OST [FLAC]",
+}
+
+# Exact titles verified as Chinese during the 2026-09-09 investigation.
+# Do not populate this from merely ambiguous shared-Han words.
+_NON_JAPANESE_TITLES: set[str] = {
+    "我亲爱傀儡",  # Shibayan: published Chinese wording
+    "背水一战",  # Avenue Room: published as Bei shui yi zhan
+    "好久不见",  # MISTY RAIN: published as Haojiubujian
+    "伽蓝雨",  # A-One: Chinese title and lyrics
+}
+
+
+# Chinese titles reviewed against published release information (2026-09-09).
+# Keys are adjacent (circle directory, album directory) names; values are
+# exact recorded titles, including explicitly reviewed metadata variants.
+# Do not skip whole circles or mixed-language albums. Japanese neighbors and
+# the same shared-Han title on another release remain eligible.
+_NON_JAPANESE_RELEASE_TITLES: dict[tuple[str, str], set[str]] = {
+    # https://steamcommunity.com/app/1715460/announcements/
+    ('[GAMEPULSE 游戏脉冲]', '2024.12.01 東方冰之勇者記 - 新支持者包'): {
+        '兔子时间',
+        '雨夜列车',
+        '静谧的魔法森林',
+        '妖怪大酒馆',
+        '不羁奔放~百鬼之王！',
+        '至暗时刻',
+        '汇集狂热之地',
+        '星间轨道',
+        '超弦轨道',
+        '雾之湖钻头狂',
+        '神隐之庭',
+        '枫落忆痕',
+        '红枫乱舞~觉醒',
+        '边境',
+        '准备就绪~火力全开！',
+        '星河鹭起',
+        '不可测集',
+        '幻梦颂歌',
+        '不可窥探多重梦境',
+        '跨越45亿年的羁绊',
+    },
+    # https://store.steampowered.com/app/3564980/Touhou_Hero_of_Ice_Fairy__Rose_Idol_Soundtrack/
+    ('[GAMEPULSE 游戏脉冲]', '2025.05.17 Koi Overdose [东方游剧天14]'): {
+        '蔷薇偶像(Live at ©Gensokyo武道馆)',
+        '台前妆后',
+        '恋语陷阱',
+        '妄想感觉操控',
+        '对你的爱恋绝非谎言',
+        '绝对梦幻玫瑰花瓣',
+        '献给你的荆棘之歌',
+        '妄想感觉操控(Instrumental)',
+        '对你的爱恋绝非谎言(Instrumental)',
+        '献给你的荆棘之歌(Instrumental)',
+        '对你的爱恋绝非谎言(Studio.Ver)',
+        '献给你的荆棘之歌(Studio.Ver)',
+    },
+    # https://store.steampowered.com/app/4119320/Touhou_Hero_of_Ice_Fairy__Soundtrack2__Ashes_of_The_Moonburn_feat_KujoRyo__Darkxixin/
+    ('[GAMEPULSE 游戏脉冲]', '2026.04.26 Touhou Hero of Ice Fairy - Soundtrack 2 - Ashes of The Moonburn'): {
+        '不朽不灭，永世业火',
+        '永远之歌',
+        '缚于永恒的共犯',
+        '满月之下~丑时三刻~',
+        '须臾之歌~天人的音乐~',
+        '兔子帮，出征！',
+        '竹取飞去哪？',
+        '蓬莱异闻',
+        '相杀相依',
+        '焚尽不公 (帅气兔子 Remix)',
+        '不朽不灭，永世业火 (instrumental)',
+        '永远之歌 (instrumental)',
+        '缚于永恒的共犯 (Instrumental)',
+        '满月之下~丑时二刻~',
+        '满月之下~丑时一刻~',
+        '须臾之歌~明月的威光~',
+        '须臾之歌~永远的庭院~',
+    },
+    # https://www.101soundboards.com/boards/1139557-cang-yue-xian-ge-touhou-video-game-music
+    ('[Giinno Country]', '2022.04.22 [GCCD-01] 苍月弦歌'): {
+        '踏雪莲台野',
+        '夜萤善光寺',
+        '天鸟船神社',
+        '静谧的月之里',
+        '永夜的追忆',
+        '月都旧事，竹取的传说',
+    },
+    # https://www.dizzylab.net/d/GCCD-02/
+    ('[Giinno Country]', '2023.07.23 [GCCD-02] 危楼记事 [广西TH3]'): {
+        '危楼回忆录',
+        '空与海的记忆',
+        '堇色吟游者之梦',
+        '逆飞的白昼客星',
+        '夜与不可思议',
+        '属于二人的现世逃避行',
+        '危楼回忆录（inst.）',
+    },
+    # https://www.dizzylab.net/d/MCG-01/
+    ('[MCG音乐组]', '2021.08.07 追忆幻想乡 MineCraft幻想乡九周年纪念CD [魅知幻想博览会 2021 上海场]'): {
+        '幻想乡天地缘起',
+        '山纹浮响,雨瀑秋间',
+        '嫉妒的华尔兹',
+        '黄昏中的废弃之都',
+        '东京37F',
+        '冥界一日风景',
+        '闲蝉悬声,云歇浅斟',
+        '桃源梦乡',
+        '魂牵梦绕之地',
+    },
+    # https://www.dizzylab.net/d/MCG-01/
+    ('[MineCraft幻想乡]', '2021.08.07 追忆幻想乡 [魅知幻想博览会 2021 上海场]'): {
+        '幻想乡天地缘起',
+        '山纹浮响，雨瀑秋间',
+        '嫉妒的华尔兹',
+        '黄昏中的废弃之都',
+        '东京37F',
+        '冥界一日风景',
+        '闲蝉悬声，云歇浅斟',
+        '桃源梦乡',
+        '魂牵梦绕之地',
+    },
+    # https://www.dizzylab.net/d/SRCP01/
+    ('[SORR!COP]', '2023.07.23 [SRCP-01] 馆中舞会邀请函 [广西TH3]'): {
+        '满目虚无的红',
+        '未见之城',
+        '蕾米莉亚好像若无其事的下午',
+    },
+    # https://www.dizzylab.net/d/SRCP01/
+    ('[SORRICOP]', '2023.07.23 [SRCP-01] 馆中舞会邀请函 [广西TH3]'): {
+        '满目虚无的红',
+        '未见之城',
+        '蕾米莉亚好像若无其事的下午',
+    },
+    # https://www.dizzylab.net/d/SRCP02/
+    ('[SORRICOP]', '2024.10.04 [SRCP-02] 魂蝶花葬记 ~ The Blossom of Everlasting [广西TH5]'): {
+        'intro ~ 得闲趣话',
+        '异闻循迹',
+        '梦随樱逝',
+        '剑断我执',
+        '魂蝶花葬 ~ 死别',
+        '春风吹雪',
+    },
+    # https://www.dizzylab.net/d/SRCP03/
+    ('[SORRICOP]', '2025.07.19 [SRCP-03] 须臾的悖论 ~ Immortal Dialectics ~'): {
+        '月难！心跳加速是病啊',
+        '一隅长明',
+        '须臾的悖论 ~ Immortal Dialectics ~',
+        '月难！/)_/)心跳(〇` ﾟДﾟ)加速是病啊',
+    },
+    # https://www.dizzylab.net/d/SS-TH-001/
+    ('[Sociable State]', '2024.10.25 [SS-TH-001] 流彩桜華 [PartyNight×广州TH-游剧天P2]'): {
+        '揽月',
+        '飘上月球，不死之烟',
+    },
+    # https://thwiki.cc/仲夏摇篮曲
+    ('[Static World]', '2024.08.18 [SWCD-018] 仲夏摇篮曲 [魅知幻想 星辉琉璃]'): {
+        '给予我的信',
+        '飞越蔚蓝之空',
+        '林间小憩',
+        '回忆有你的时光',
+    },
+    # https://store.steampowered.com/app/929350/__Fantastic_Danmaku_Festival_Soundtrack/
+    ('[东方幕华祭制作组]', '2014.07.19 東方幕華祭 紅月篇 OST [COMIDAY14]'): {
+        '散落的烛光 ～ Candlelight',
+        '妖精背水一战 ～ A dare',
+        '东方梦之馆 ～ East castle',
+        '风卷残云 ～ Kongfu storm',
+        '沉睡中的大图书馆 ～ The library in silence',
+        '华丽的恶魔之舞 ～ The little devil dance',
+        '时钟走廊 ～ Flowing time',
+        '钟楼战场 ～ Bell tower',
+        '绯月之主 ～ The master of red moon',
+        '无尽的命运 ～ Endless fate',
+        '幕华祭  ～红月编～',
+        '百年少女怪谈 ～ The mystery',
+        '淋满鲜血的还有谁呢 ～ Who care',
+    },
+    # https://thwiki.cc/index.php?setlang=ja&title=東方幕華祭_春雪篇_ORIGINAL_SOUNDTRACK
+    ('[东方幕华祭制作组]', '2019.04.05 東東方幕華祭 春雪篇 OST'): {
+        '常世之乡',
+        '无穷无尽的白色',
+        '梦境演剧',
+        '喜欢西洋乐的人偶们',
+        '看不破的人偶剧',
+        '春岚',
+        '通向往生之界的阶梯',
+        '极乐庄严',
+        '狂樱之舞',
+        '生死之间花吹雪',
+        '飞舞吧！永世的繁花',
+        '幕华祭~春雪篇~',
+        '感知崩坏的空间',
+        '人类与妖怪的铁幕',
+        '月下花见急行',
+        '地狱行乐',
+    },
+    # https://store.steampowered.com/app/4062010/__OST/?l=schinese
+    ('[东方幕华祭制作组]', '2025.10.05 東方幕華祭 永夜篇 OST'): {
+        '萤之光迹',
+        '竹林突围',
+        '历史不会简单被忘记',
+        '岁月不待 一日千秋',
+        '森罗万象',
+        '归旅',
+        '人类的勇气',
+        '幕华祭 ~永夜篇~',
+        '莫里茨的游戏',
+        '就这样沉入黑暗吧',
+        '噩梦降临',
+        '人类的勇气 永琳阶段',
+        '人类的勇气 辉夜阶段',
+    },
+    # https://store.steampowered.com/app/1259650/Elegant_Impermanence_of_Sakura_Soundtrack/
+    ('[东方祈华梦制作组]', '2020.04.16 东方祈华梦 ～ Elegant Impermanence of Sakura. Soundtrack'): {
+        '意祈华思 夜星明梦',
+        '幽竹远梦',
+        '辉夜的指引',
+        '失色的镜像世界',
+        '林间烟雨小令',
+        '彼岸之云 结界之梦',
+        '魔女和亡灵的★Dance Party',
+        '万华镜之箱',
+        '樱花飞舞的浅间神社',
+        '徒名草之道 ～神宫寺祈前哨战～',
+        '华彩飞扬\u3000～ Indomitable Kagura',
+        '一念的繁华',
+        '春彩动荡之寂 ～盛樱之世～',
+        '灵空猝灭雨',
+        '落花残响',
+        '幻想乡的神隐少女',
+    },
+    # https://store.steampowered.com/app/1259650/Elegant_Impermanence_of_Sakura_Soundtrack/
+    ('[东方祈华梦制作组]', '2020.05.01 [MXB-007] 浅间密约 ～ Another Dream'): {
+        '意祈华思 夜星明梦',
+        '幽竹远梦',
+        '辉夜的指引',
+        '失色的镜像世界',
+        '林间烟雨小令',
+        '彼岸之云 结界之梦',
+        '魔女和亡灵的★Dance Party',
+        '万华镜之箱',
+        '樱花飞舞的浅间神社',
+        '徒名草之道 ～神宫寺祈前哨战～',
+        '华彩飞扬\u3000～ Indomitable Kagura',
+        '一念的繁华',
+        '春彩动荡之寂 ～盛樱之世～',
+        '灵空猝灭雨',
+        '落花残响',
+        '幻想乡的神隐少女',
+        '参见樱华院大人',
+        '人间之里的秋雾',
+        '朦胧夜雨 彼岸幽樱',
+        '不存在仙人的空之岛',
+        '樱华院静前哨战',
+        '八岳山的破晓',
+    },
+    # https://store.steampowered.com/bundle/26151/Mystias_Izakaya_Complete_OST_Bundle/
+    ('[二色幽紫蝶] Dichroic Purpilion', '2021.07.30 東方夜雀食堂 - OST原聲音樂集1'): {
+        '静谧的妖怪栖息之地 - 兽道Theme',
+        '今天的博丽神社也依然庄严而冷清 - 博丽神社Theme',
+        '舒适午后的微甜红茶 - 红魔馆Theme',
+        '无限延伸的绿色秘境 - 迷途竹林Theme',
+        '破败与凋零 - 白玉楼Theme',
+        '人类的入眠，妖怪的起床 - 兽道气氛Lv1',
+        '即使是妖怪也要努力打工！ - 兽道气氛Lv2',
+        '妖怪食之祭 - 兽道气氛Lv3',
+        '笔记中的七色世界',
+        '紧张，但没有完全紧张',
+        '令人愉快的话语',
+        '咆哮吧！我灵魂中的声音！',
+        '深不见底的食欲',
+        '尘埃落定',
+        '满身创痍 - Game Over',
+    },
+    # https://store.steampowered.com/bundle/26151/Mystias_Izakaya_Complete_OST_Bundle/
+    ('[二色幽紫蝶] Dichroic Purpilion', '2021.12.19 東方夜雀食堂 - OST原聲音樂集2'): {
+        '人间之里-三五成群',
+        '人间之里-接踵而至',
+        '人间之里-人山人海',
+        '博丽神社-惊闻客来',
+        '博丽神社-稀客盈门',
+        '博丽神社-座无虚席',
+        '红魔馆-饮酒品肴',
+        '红魔馆-色味共赏',
+        '红魔馆-遂心快意',
+        '迷途竹林-轻车熟路',
+        '迷途竹林-欢欣狂舞',
+        '白玉楼-一步之遥',
+    },
+    # https://store.steampowered.com/app/1982490/__OST3/?l=tchinese
+    ('[二色幽紫蝶] Dichroic Purpilion', '2022.05.14 東方夜雀食堂 - OST原聲音樂集3'): {
+        '神仙都爱俺们屯儿',
+        '妖怪之山-初见方园',
+        '妖怪之山-临风对月',
+        '妖怪之山-一览众小',
+        '魔女武踏会上的蘑女舞踏烩',
+        '魔法之森-孤芳自赏',
+        '魔法之森-花鸟庭园',
+        '魔法之森-闲适静谧',
+        '血池地狱-吞天噬地',
+        '去旧地狱街道吃香喝辣！',
+        '旧地狱-暗里寻光',
+        '旧地狱-柳暗花明',
+        '旧地狱-万紫千红',
+        '在地灵殿动物园投食撸宠',
+        '地灵殿-废狱笙歌',
+        '地灵殿-独舞成影',
+        '地灵殿-众舞成画',
+        '料理大赛-半忧半喜',
+        '料理大赛-亦赛亦闹',
+        '料理大赛-一将功成',
+        '吞天噬地(未采用稿01)',
+        '吞天噬地(未采用稿02)',
+        '吞天噬地(未采用稿03)',
+        '在地灵殿动物园投食撸宠(保留版本)',
+    },
+    # https://store.steampowered.com/app/2194750/?l=tchinese
+    ('[二色幽紫蝶] Dichroic Purpilion', '2022.11.18 東方夜雀食堂 - OST原聲音樂集4'): {
+        '命莲寺-青山绿瓦',
+        '命莲寺-丹书黄卷',
+        '命莲寺-古佛新衣',
+        '清修苦心，得道飞升',
+        '神灵庙-绀碧一隅',
+        '神灵庙-树静风轻',
+        '神灵庙-苔痕皆缘',
+        '秋意纷至，灯火阑珊',
+        '摇滚大赛-入道之魂',
+        '摇滚大赛-船灵之魂',
+        '摇滚大赛-虎刹之魂',
+        '国宴大赛-殚精竭虑',
+        '国宴大赛-精雕细琢',
+        '国宴大赛-超我大成',
+    },
+    # https://store.steampowered.com/app/2534540?l=schinese
+    ('[二色幽紫蝶] Dichroic Purpilion', '2023.07.28 东方妖精武踏会 - OST原声音乐集'): {
+        '道中01 - 可爱的大战争叠奏曲',
+        '决战01 - 前所未见的噩梦世界',
+        '决战02 - 再也进不去的门',
+        'BOSS战00 - 食我大手电筒啦！',
+        'BOSS战01 - 少女二色绮想曲',
+        'BOSS战02 - 星之恋色MasterSpark!!!',
+        'BOSS战03 - 女仆与血之怀表',
+        'BOSS战04 - 东方妖妖妖妖梦',
+        'BOSS战05 - 笼中灰姑娘的狂气之瞳',
+        'BOSS战06 - 信仰着不存在之人的少女望见的日本原风景',
+        'BOSS战07 - 废狱摇篮曲',
+        'BOSS战08 - 大神神话传',
+        'ExBOSS战01 - 潘地漫尼克星球',
+        'ExBOSS战02 - 两个世界',
+        'UI界面01 - 雪月樱花之国',
+        'UI界面02 - 活泼的纯情小姑娘',
+    },
+    # https://store.steampowered.com/app/2797450/__5/?l=schinese
+    ('[二色幽紫蝶] Dichroic Purpilion', '2024.02.12 東方夜雀食堂 - OST原聲音樂集5'): {
+        '草帽花农与金色阳光',
+        '太阳花田-一叶入梦',
+        '太阳花田-花团锦簇',
+        '太阳花田-金色交响',
+        '全员恶人',
+        '辉针城-悠然来声',
+        '辉针城-回转加速',
+        '辉针城-无垠狂飙',
+        '吾令徐徐春风!吹散无尽幽暗!',
+        '你所不知道的幽谷兰香',
+        '魔界-奇花异卉',
+        '无秽的彼方',
+        '月都-风起萧瑟',
+        '困兽之斗，天罗地网！',
+    },
+    # https://www.bilibili.com/video/BV1U84y1D7q3/
+    ('[旧雨忆梦幻想乐团]', '2023.09.23 [JYYM-01] 東方山海傳 ~ the Potential Crisis'): {
+        '山海汇聚~Story of Nightmare',
+        '冲破结界的骇浪~Connect the bridge of the continent',
+        '绽放的净土之花~Purify filth',
+        '古瓷的妖兽祭',
+        '审判世界的神魔之眼',
+        '幽匿之风 炽焰之月',
+        '难逃的雷神之庙~The thunder',
+        '苍之山海~power of jadeite',
+        '无上之龙的闪耀之鳞~The strongest brain',
+        '现实与虚假之路',
+        '山海汇聚，不死鸟的重生~Nirvana is reborn！',
+        '幻想乡的存亡时刻~to be，or not to be',
+        '少女曾见的古瓷之山巅~Mountain And Sea',
+        '血月降至！狐神降临之夜',
+        '真相终将破晓',
+        '山海终将汇聚~Story End',
+        '再一次，为世界的美好而战吧',
+    },
+    # https://rickyrister.bandcamp.com/album/a-journey-of-reminiscences
+    ('[明京梦纪行制作组]', '2023.10.06 明京梦纪行 ～ A Journey of Reminiscences'): {
+        '梦纪行',
+        '化鸟之诗，流离于梦之旅路',
+        '海波逐风流',
+        '祇园花行路',
+        '华尽染分恋语录 ～ A Fruitless Love',
+        '雨月尽头的妄樱',
+        '春花长留望月庵 ～ Drowning in the Spring Sky',
+        '童戏御谣曲',
+        '梁尘醉狂歌 ～ A Lifelong Indulgence',
+        '白峰漫想谭',
+        '鞠壶自有四方天 ～ アリ、ヤウ、オウ！',
+        '阳炎涅槃忏悔咒 ～ Confession\xa0or\xa0Curse',
+        '荣花之色，明灭于幻之海空',
+        '日暮归倦鸟 ～ Meteor Dream',
+    },
+    # https://thwiki.cc/柳畔星夜逝_~_东方夏夜祭_Original_Sound_Track
+    ('[梦现彼岸结界社]', '2017.07.08 [MXB-C01] 柳畔星夜逝 ~ 东方夏夜祭 Original Sound Track [上海TH08]'): {
+        '被遗忘的久远星辉',
+        '宁静夏夜的微风',
+        '喧嚣吧！在这不眠之夜',
+        '疾风闪电',
+        '木灵们的夏夜祭',
+        '青柳传说',
+        '镜中的幻像',
+        '记忆中遥远的星星',
+        '银河的彼方',
+        '闪耀在世界尽头',
+        '晚星之梦',
+        '来自仙界的新风',
+        '风中花，雪中月',
+        '满身疮痍',
+    },
+    # https://thwiki.cc/朝花暮留香_~_Departure,_Fragrant_Conformist./附带故事
+    ('[梦现彼岸结界社]', '2019.08.17 [MXB-005] 朝花暮留香 ～ Departure, Fragrant Conformist [上海TH10]'): {
+        '狭界的飘扬\u3000～ Liberal Liberty',
+        '雾里看花、不思量',
+        '灵知的太阳信仰\u3000～ Flowery Fusion',
+        '镜中的幻象',
+        '无何有之乡\u3000～ Deep Garden',
+        '落红的幽响',
+        '曲水流觞\u3000～ Genteel Ritual',
+        '群青的怅惘',
+        '镜花水月、自难忘',
+    },
+    # https://www.dizzylab.net/d/MhT_TH007/
+    ('[疯帽子茶会] Mad hatter Tea', '2018.10.05 [MhT·TH-007] 白脱怀表 [真·東方遊劇天]'): {
+        '漫步幻想乡',
+        '红',
+        '漫步在幻想乡',
+    },
+    # https://www.dizzylab.net/d/MhT_TH008/
+    ('[疯帽子茶会] Mad hatter Tea', '2018.12.15 [MhT·TH-008] 星夜神话 [COMICUP23]'): {
+        '星夜神话',
+        '没人猜的谜语',
+        '萤火之森',
+    },
+    # https://www.dizzylab.net/d/MhT_TH009/
+    ('[疯帽子茶会] Mad hatter Tea', '2019.05.25 [MhT·TH-009] 羽衣清歌 [京华万象展1]'): {
+        '克鲁苏图童话(Remix ver.)',
+        '华胥梦魂 -乱-',
+        '乐游空海',
+        '傀儡师会梦见杀人兔吗？',
+        '天官风角秘盘 -木符-',
+        '献给深红之王的七重奏',
+    },
+    # https://www.dizzylab.net/d/MhT_TH010/
+    ('[疯帽子茶会] Mad hatter Tea', '2019.08.17 [MhT·TH-010] 心觉幻恋 [上海TH10]'): {
+        '少女废墟旅行~Hellaby',
+        '心觉幻恋-误线',
+        '心觉幻恋 -悟限',
+        '祂的乐章',
+        '为自由平等而旅行',
+    },
+    # https://www.dizzylab.net/d/CLMHT-01/
+    ('[疯帽子茶会] Mad hatter Tea', '2019.12.21 [CLMHT-01] 千年战争～iek loin staim haf il dis o-del al [COMICUP25]'): {
+        '千年战争～iek loin staim haf il dis o-del al',
+        '历火 ～Rondo of Nostalgia',
+    },
+    # https://www.dizzylab.net/d/MhT_TH014/
+    ('[疯帽子茶会] Mad hatter Tea', '2021.06.12 [MhT·TH-014] 祈风 [COMICUP28]'): {
+        '风之诗',
+        '笼中鸟',
+        '遥远之星',
+        '绵绵无绝期',
+    },
+    # https://www.dizzylab.net/d/MhT_TH015/
+    ('[疯帽子茶会] Mad hatter Tea', '2021.08.07 [MhT·TH-015] Shion [上海TH11]'): {
+        '无何有之乡·静',
+        '少女废墟旅行（JP Ver.）',
+        '摇光',
+        '无何有之乡·静 INST',
+        '少女废墟旅行 INST',
+    },
+    # https://www.dizzylab.net/d/MhT-TH018/
+    ('[疯帽子茶会] Mad hatter Tea', '2022.09.30 [MhT·TH-018] 眷恋'): {
+        '幽兰',
+        '落樱旅程',
+        '幽兰inst',
+        '落樱旅程inst',
+    },
+    # https://www.dizzylab.net/d/MhT-TH019/
+    ('[疯帽子茶会] Mad hatter Tea', '2023.07.23 [MhT-TH019] 絢夢のワルツ~Valzer da sogno [广西TH3]'): {
+        '伊甸花园～Hortus Eden～',
+        '你是如此可爱',
+        '腐烂苹果',
+        '伊甸花园～Hortus Eden～ offvoice.ver',
+        '你是如此可爱 offvoice.ver',
+    },
+    # https://store.steampowered.com/app/2082910/OST/
+    ('[车万石]', '2022.07.19 东方心之解束 OST'): {
+        '帕琪的忧伤',
+        '日常的红茶馆',
+        '雾之湖畔',
+        '欢乐的芙兰',
+        '人间之里的约会',
+        '露米娅的饭点',
+        '两人的庆典',
+        '封锁',
+        '烦恼冻结',
+        '虚幻与现实的缔造者',
+        '比蔷薇更红的希望',
+        '永恒的誓言守护者',
+    },
+    # https://store.steampowered.com/app/2269160/__Abyss_Soul_Lotus_Soundtrack/?l=tchinese
+    ('[雨夜枫雪制作组]', '2023.02.03 东方雪莲华 ～ Abyss Soul Lotus. Soundtrack'): {
+        '盛开于净土之莲 (Title Theme)',
+        '冰与雪的灵动 (Boss 1 Theme)',
+        '悔恨凝结之路 (Stage 2 Theme)',
+        '开不尽的雪莲华 (Stage 3 Theme)',
+        '少女所见的深渊风景 (Stage 4 Theme)',
+        '沉没八万由旬的叹息 (Stage 5 Theme)',
+        '以太虚无论 (Boss 5 Theme)',
+        '绽放在世界终焉 (LSC Theme)',
+        '待春花烂漫 (Staff Roll Theme)',
+        '被遗忘的无名者 (Stage Extra Theme)',
+        '不灭之魂 ～ Everlasting Volition (Boss Extra Theme)',
+        '盛开于净土之莲 (Beta Version)',
+        '冰与雪的灵动 (Beta Version)',
+        '悔恨凝结之路 (Beta Version)',
+        '开不尽的雪莲华 (Beta Version)',
+        '绽放在世界终焉 (Unused Version)',
+        '明日为终结之日 (Unused Version)',
+        '最后的阿修罗 ～ Forgotten Tears (Unused Version)',
+    },
+    # https://store.steampowered.com/app/3276850/__Immortal_Immanuel_Soundtrack/?l=tchinese
+    ('[雾雨威Channel]', '2025.01.17 東方资志疏OST'): {
+        '织梦呓 ~ Unobservable Undercurrent.',
+        '花径醉尘，酒香翩跹',
+        '瓿中游龙',
+        '勿忘草于原野盛开',
+        '丛云之上无顶天',
+        '血红的惊雷',
+        '万钧肝胆挞神鸣 ~ Godless God.',
+        '破碎宫殿的残响',
+        '云霄白狐乐园',
+        '废土田园诗 ~ Barriers between Hearts.',
+        '通讯中断 ~ Player‘s Score.',
+    },
+    # https://www.dizzylab.net/d/THgu-05/
+    ('[鸽屋谷]', '2022.10.03 回忆京都 [深圳TH4]'): {
+        '神隐',
+        '逢魔之时',
+        '罗生门',
+    },
 }

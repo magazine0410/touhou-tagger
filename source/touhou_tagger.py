@@ -2250,6 +2250,14 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
                       f"(titlesort already correct: "
                       f"{rm['titlesort_old']})")
                 rm_skipped += 1
+            elif status in {"skip_non_japanese", "skip_ambiguous_language"}:
+                print(f"  [LANG-REVIEW] {fname}  "
+                      f"(non-Japanese or uncertain language; titlesort preserved)")
+                rm_skipped += 1
+            elif status == "skip_unresolved":
+                print(f"  [UNRESOLVED] {fname}  (titlesort preserved)")
+                print(f"              incomplete = {rm['titlesort_new']}")
+                rm_skipped += 1
             elif status == "skip_no_title":
                 rm_no_title += 1
             else:  # error
