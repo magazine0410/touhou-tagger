@@ -323,6 +323,76 @@ class LockedTagWritePolicyTests(_LockStoreCase):
         self.assertEqual(groupings, [("set", "Bad Apple!!")])
         self.assertIn(("album", "Correct Album Title"), writes)
 
+    def test_locked_comparison_respects_other_skip_policies(self):
+        tags = ("date", "year", "catalognumber", "arranger", "albumartistsort")
+        tag_locks.set_locks([(TRACK, tag) for tag in tags], True)
+        _w, _g, result = self.run_tagging(
+            selected_tags=tags,
+            existing=dict(date="2000", year="2000", catalognumber="OLD",
+                          arranger="Manual", albumartistsort="Manual Circle"),
+            album_info=dict(date="2020-01-01", catalog_numbers=["NEW"],
+                            album_artists=["Other Circle"]),
+        )
+        self.assertEqual(result["tag_changes"], [])
+        self.assertEqual(result["locked_skipped"], len(tags))
+
+    def test_locked_credit_preview_requires_force_for_existing_credit(self):
+        tag_locks.set_lock(TRACK, "arranger", True)
+        writes, _g, result = self.run_tagging(
+            selected_tags=("arranger",), force_credits=True,
+            existing={"arranger": "Manual"})
+        self.assertEqual(writes, [])
+        self.assertEqual(result["tag_changes"], [dict(
+            filename=LOCAL_FILES[0]["filename"], path=TRACK, tag="arranger",
+            old="Manual", new="Shibayan", locked=True)])
+
+    def test_locked_grouping_clear_is_reported_but_not_written(self):
+        tag_locks.set_lock(TRACK, "grouping", True)
+        tracks = [dict(number=1, disc=1, title="Song", original_titles=[])]
+        _w, groupings, result = self.run_tagging(
+            selected_tags=("grouping",), wiki_tracks=tracks,
+            existing={"grouping": "Manual"})
+        self.assertEqual(groupings, [])
+        self.assertEqual(result["tag_changes"][0]["new"], None)
+        self.assertTrue(result["tag_changes"][0]["locked"])
+        _w, _g, empty_result = self.run_tagging(
+            selected_tags=("grouping",), wiki_tracks=tracks)
+        self.assertEqual(empty_result["tag_changes"], [])
+
+    def test_locked_album_sort_preview_uses_prewrite_display_value(self):
+        tag_locks.set_lock(TRACK, "albumartistsort", True)
+        _w, _g, result = self.run_tagging(
+            selected_tags=("albumartist", "albumartistsort"),
+            existing={"albumartist": "Existing Latin"},
+            album_info={"album_artists": ["森羅万象"]})
+        change = next(ch for ch in result["tag_changes"] if ch.get("locked"))
+        self.assertEqual(change["new"], "Existing Latin")
+
+    def test_locked_titlesort_preview_is_always_dry_run(self):
+        tag_locks.set_lock(TRACK, "titlesort", True)
+        with patch.object(touhou_tagger, "ROMANIZER_AVAILABLE", True), \
+             patch.object(touhou_tagger.japanese_romanizer, "romanize_file",
+                          return_value=dict(status="overwritten",
+                                            titlesort_old="Old", titlesort_new="New")) as rm:
+            writes, _g, result = self.run_tagging(
+                selected_tags=("titlesort",), romanize=True,
+                force_titlesort=True, existing={"titlesort": "Old"})
+        self.assertEqual(writes, [])
+        self.assertTrue(rm.call_args.kwargs["dry_run"])
+        self.assertTrue(result["tag_changes"][0]["locked"])
+        self.assertEqual(result["tag_changes"][0]["new"], "New")
+        self.assertEqual(result["overwritten"], 0)
+
+    def test_empty_locked_artist_preview_uses_available_credits(self):
+        tag_locks.set_locks([(TRACK, "artist"), (TRACK, "artistsort")], True)
+        writes, _g, result = self.run_tagging(
+            selected_tags=("artist", "artistsort"), use_touhoudb=True,
+            staff_name_map={"シバヤン": "Shibayan"})
+        self.assertEqual(writes, [])
+        self.assertEqual({ch["tag"]: ch["new"] for ch in result["tag_changes"]},
+                         {"artist": "シバヤン; 3L", "artistsort": "Shibayan; 3L"})
+        self.assertTrue(all(ch["locked"] for ch in result["tag_changes"]))
+
 
 class RomaniserLockPredicateTests(unittest.TestCase):
     """The romaniser takes locks by injection so its CLI stays lock-free."""

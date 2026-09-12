@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from tests import _support  # noqa: F401
 
@@ -8,6 +9,34 @@ import file_scan
 
 
 class FileScanTests(unittest.TestCase):
+    def test_track_tags_sort_numerically_even_when_filenames_disagree(self):
+        tags = {"(10).flac": "10/183", "(100).flac": "100",
+                "(11).flac": "11", "99.flac": "2", "(09).flac": "9"}
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in tags:
+                (Path(tmp) / name).touch()
+            with patch.object(file_scan.mutagen, "File", side_effect=lambda path, **kw:
+                              {"tracknumber": [tags[Path(path).name]]}):
+                tracks = file_scan.scan_music_files(tmp)
+        self.assertEqual([t["number"] for t in tracks], [2, 9, 10, 11, 100])
+        self.assertEqual(tracks[0]["filename"], "99.flac")
+
+    def test_numeric_discs_and_filename_fallbacks(self):
+        names = ["unknown-z.flac", "100.flac", "11.flac", "2-b.flac",
+                 "unknown-a.flac", "2-a.flac", "10.flac"]
+        with tempfile.TemporaryDirectory() as tmp:
+            for disc in ("Disc 10", "Disc 2"):
+                folder = Path(tmp) / disc
+                folder.mkdir()
+                for name in names:
+                    (folder / name).touch()
+            with patch.object(file_scan.mutagen, "File", return_value=None):
+                tracks = file_scan.scan_music_files(tmp)
+        expected_names = ["2-a.flac", "2-b.flac", "10.flac", "11.flac",
+                          "100.flac", "unknown-a.flac", "unknown-z.flac"]
+        self.assertEqual([(t["disc"], t["filename"]) for t in tracks],
+                         [(disc, name) for disc in (2, 10) for name in expected_names])
+
     def test_scans_disc_folders_and_ignores_non_audio_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             album = Path(tmp)

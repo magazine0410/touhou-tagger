@@ -1037,6 +1037,16 @@ _PHRASE_OVERRIDES: dict[tuple, str] = {
     ("錦", "上京"): "Kinjoukyou",
     ("ゴールド", "ラッシュ"): "Gold Rush",
 
+    # Watatsuki's Spell Card: UniDic splits 綿月 as メン + ガツ and
+    # reads 神海 as the proper name コウミ.  Reviewed title reading:
+    # https://en.touhouwiki.net/wiki/Fossilized_Wonders/Music
+    ("綿", "月"): "Watatsuki",
+    ("神海", "戦"): "Shinkaisen",
+
+    # 二ッ岩 is normalized to 二っ岩 before MeCab splits 二 + っ + 岩.
+    # Preserve the Touhou name's reading in 佐渡の二ッ岩 and other titles.
+    ("二", "っ", "岩"): "Futatsuiwa",
+
     ("幻想", "郷"): "Gensokyo",
     ("妖", "々", "夢"): "Youyoumu",
     ("妖", "々", "跋扈"): "Youyou Bakko",

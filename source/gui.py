@@ -38,6 +38,7 @@ from file_scan import (
     _format_track_label,
     _format_track_number,
     scan_music_files,
+    track_sort_key,
     album_dir_for_file,
     SUPPORTED_EXTENSIONS,
 )
@@ -827,6 +828,24 @@ def gui_main() -> None:
     # =====================================================================
     # Wiki Tagger tab
     # =====================================================================
+    class _TrackTreeItem(QtWidgets.QTreeWidgetItem):
+        """Keep numeric track order when Qt sorts the displayed labels."""
+
+        def __init__(self, track: dict, multi_disc: bool) -> None:
+            super().__init__([
+                _format_track_label(track, multi_disc), "", "",
+                track.get("grouping") or "",
+            ])
+            self._track_sort_key = track_sort_key(track)
+            self.setFlags(self.flags() & ~QtCore.Qt.ItemIsEditable)
+
+        def __lt__(self, other) -> bool:
+            tree = self.treeWidget()
+            if (tree is not None and tree.sortColumn() == 0
+                    and isinstance(other, _TrackTreeItem)):
+                return self._track_sort_key < other._track_sort_key
+            return super().__lt__(other)
+
     class WikiTaggerTab(QtWidgets.QWidget):
         def __init__(self) -> None:
             super().__init__()
@@ -1715,15 +1734,7 @@ def gui_main() -> None:
                     ),
                 )
                 for t in tracks:
-                    label = _format_track_label(t, multi_disc)
-                    grouping = t.get("grouping") or ""
-                    child = QtWidgets.QTreeWidgetItem(
-                        [label, "", "", grouping]
-                    )
-                    child.setFlags(
-                        child.flags() & ~QtCore.Qt.ItemIsEditable
-                    )
-                    album_item.addChild(child)
+                    album_item.addChild(_TrackTreeItem(t, multi_disc))
                 self._tree.addTopLevelItem(album_item)
                 # Reflect any persisted "unavailable" mark on this album.
                 self._apply_unavailable_style(
@@ -2836,9 +2847,21 @@ def gui_main() -> None:
                 r.get("locked_skipped", 0) for r in self._results
             )
             if total_locked:
+                blocked_changes = [
+                    ch for r in self._results
+                    for ch in r.get("tag_changes", []) if ch.get("locked")
+                ]
+                blocked_tracks = {
+                    ch.get("path") or (r.get("music_dir"), ch["filename"])
+                    for r in self._results
+                    for ch in r.get("tag_changes", []) if ch.get("locked")
+                }
                 footer += (
                     f"  ||  🔒 Locked: {total_locked} tag(s) left "
-                    f"untouched (see the Changes tab)"
+                    f"untouched\n"
+                    f"Locks prevented {len(blocked_changes)} tag change(s) "
+                    f"across {len(blocked_tracks)} track(s). "
+                    "See Changes → Only locked; select a tag to narrow the list."
                 )
             lines.append(footer)
             if dry and (total_t > 0 or any(
@@ -2918,15 +2941,7 @@ def gui_main() -> None:
                         if tracks else False
                     )
                     for t in tracks:
-                        label = _format_track_label(t, multi_disc)
-                        grouping = t.get("grouping") or ""
-                        child = QtWidgets.QTreeWidgetItem(
-                            [label, "", "", grouping]
-                        )
-                        child.setFlags(
-                            child.flags() & ~QtCore.Qt.ItemIsEditable
-                        )
-                        album_item.addChild(child)
+                        album_item.addChild(_TrackTreeItem(t, multi_disc))
             finally:
                 self._tree.setSortingEnabled(was_sorted)
 
@@ -3082,6 +3097,9 @@ def gui_main() -> None:
             only_locked_cb = QtWidgets.QCheckBox("🔒 Only locked")
             only_locked_cb.setChecked(False)
             only_locked_cb.setVisible(any_locked)
+            only_locked_cb.setToolTip(
+                "Show changes prevented by locks. Combine with Filter by tag "
+                "to review, for example, only grouping.")
 
             disc_row = QtWidgets.QHBoxLayout()
             disc_row.addWidget(only_disc_cb)
@@ -3091,6 +3109,12 @@ def gui_main() -> None:
             filter_outer.addLayout(disc_row)
 
             container_layout.addWidget(filter_bar)
+            if any_locked:
+                locked_note = QtWidgets.QLabel(
+                    "🔒 Locked rows show the current value and what would be "
+                    "written if unlocked. These changes were not applied.")
+                locked_note.setWordWrap(True)
+                container_layout.addWidget(locked_note)
 
             # --- Tree ---
             tree = QtWidgets.QTreeWidget()
@@ -3214,6 +3238,9 @@ def gui_main() -> None:
                             [tag_label, old_disp, new_disp],
                         )
                         if is_locked:
+                            change_item.setToolTip(
+                                2, "Would be written if unlocked; the current "
+                                "value was preserved.")
                             tint = QtGui.QColor(*_LOCK_TINT_RGBA)
                             for col in range(3):
                                 change_item.setBackground(
@@ -3398,10 +3425,9 @@ def gui_main() -> None:
             def _apply_filters() -> None:
                 only_disc = only_disc_cb.isChecked()
                 only_locked = only_locked_cb.isChecked()
-                # The per-tag checkboxes are moot in only-discrepancies
-                # or only-locked mode.
+                # Locked rows still have tag types, so the two filters compose.
                 for cb in tag_checkboxes.values():
-                    cb.setEnabled(not only_disc and not only_locked)
+                    cb.setEnabled(not only_disc)
                 active_tags = {name for name, cb in tag_checkboxes.items()
                                if cb.isChecked()}
                 active_discs = {name for name, act in disc_type_actions.items()
@@ -3438,7 +3464,8 @@ def gui_main() -> None:
                         tag_name = child.data(0, TAG_ROLE)
                         is_lck = child.data(0, LOCKED_ROLE)
                         if only_locked:
-                            visible = bool(is_lck)
+                            visible = (bool(is_lck) and
+                                       (not active_tags or tag_name in active_tags))
                         elif not any_filtering:
                             visible = True
                         else:
@@ -3464,8 +3491,20 @@ def gui_main() -> None:
 
             for cb in tag_checkboxes.values():
                 cb.toggled.connect(_apply_filters)
-            only_disc_cb.toggled.connect(_apply_filters)
-            only_locked_cb.toggled.connect(_apply_filters)
+            # These modes describe disjoint kinds of rows. Switching to one
+            # clears the other, avoiding an unexplained empty intersection.
+            def _only_disc_toggled(checked):
+                if checked:
+                    only_locked_cb.setChecked(False)
+                _apply_filters()
+
+            def _only_locked_toggled(checked):
+                if checked:
+                    only_disc_cb.setChecked(False)
+                _apply_filters()
+
+            only_disc_cb.toggled.connect(_only_disc_toggled)
+            only_locked_cb.toggled.connect(_only_locked_toggled)
             for act in disc_type_actions.values():
                 act.toggled.connect(_apply_filters)
 

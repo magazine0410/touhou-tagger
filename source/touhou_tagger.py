@@ -1779,6 +1779,16 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
         # spelled `<tag> in file_tags`.
         locked_here = selected_tags & tag_locks.locked_tags(fpath)
         file_tags = selected_tags - locked_here
+        # Keep pre-write values for comparisons involving paired fields.
+        locked_existing = {
+            tag: (read_grouping(fpath) if tag == "grouping"
+                  else _get_existing_tag(fpath, tag))
+            for tag in locked_here
+        }
+        locked_albumartist = (
+            _get_existing_tag(fpath, "albumartist")
+            if "albumartistsort" in locked_here else None
+        )
         if locked_here:
             locked_skipped += len(locked_here)
             print(f"  [LOCKED]    {fname}  "
@@ -2132,9 +2142,10 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
         # per track).  Both tags follow skip-if-present so hand-set values
         # are never clobbered; `artistsort` additionally won't be written if
         # the romanised join still contains CJK (incomplete romanisation).
+        names_jp: list[str] | None = None
         if (use_touhoudb and wiki_track is not None
                 and file_tags & _ARTIST_TAGS):
-            names_jp: list[str] = []
+            names_jp = []
             for n in (wiki_track.get("arrangers_jp", [])
                       + wiki_track.get("vocalists_jp", [])):
                 if n and n not in names_jp:
@@ -2266,9 +2277,8 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
 
         # --- Report what the wiki would have written for locked tags ---
         # Locked tags were excluded from file_tags so no writes happened.
-        # Compute the would-be values here (best-effort; some complex tags
-        # like titlesort are omitted) so the GUI summary can show a
-        # "wiki would have set X" diff for each locked tag.
+        # Honour the other write policies too: a differing source value does
+        # not imply a prevented write when skip-if-present would preserve it.
         if locked_here:
             _cred_key = {
                 "arranger": "arrangers", "vocalist": "vocalists",
@@ -2276,6 +2286,12 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
             }
             for ltag in sorted(locked_here):
                 wiki_val: str | None = None
+                existing = locked_existing[ltag]
+                if existing and (
+                    ltag in {"date", "year", "catalognumber", "artist", "artistsort"}
+                    or (ltag in _cred_key and not force_credits)
+                ):
+                    continue
 
                 if ltag == "grouping":
                     if (wiki_track
@@ -2307,23 +2323,60 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
                         wiki_val = " & ".join(ra)
                 elif ltag == "albumartistsort" and fetch_metadata:
                     ra = album_info.get("album_artists") or []
-                    if ra:
-                        rom = " & ".join(resolve_roman(c) for c in ra)
-                        if _is_latin_script(rom):
-                            wiki_val = rom
+                    if existing and _is_latin_script(existing):
+                        continue
+                    if locked_albumartist and _is_latin_script(locked_albumartist):
+                        wiki_val = locked_albumartist
+                    elif ra:
+                        wiki_val = " & ".join(resolve_roman(c) for c in ra)
+                    effective_aa = (
+                        " & ".join(ra)
+                        if ra and "albumartist" in selected_tags
+                        else locked_albumartist
+                    )
+                    if wiki_val and (not _is_latin_script(wiki_val)
+                                     or wiki_val == effective_aa):
+                        wiki_val = None
                 elif ltag in _cred_key and fetch_credits and wiki_track:
                     cl = wiki_track.get(_cred_key[ltag], [])
                     if cl:
                         wiki_val = "; ".join(cl)
-                # artist, artistsort, titlesort — too complex to
-                # recompute outside the main write logic; omitted.
+                elif ltag in _ARTIST_TAGS and use_touhoudb and wiki_track:
+                    # Reuse names fetched for an unlocked paired field. If no
+                    # per-song enrichment is requested, wiki credits suffice.
+                    # Do not issue an extra per-song request solely to preview.
+                    if names_jp is None and not (
+                        touhoudb_add_missing and tdb_client is not None
+                        and tdb_album_id is not None
+                    ):
+                        names_jp = list(dict.fromkeys(
+                            n for n in (wiki_track.get("arrangers_jp", [])
+                                        + wiki_track.get("vocalists_jp", [])) if n
+                        ))
+                    if names_jp:
+                        wiki_val = "; ".join(
+                            resolve_roman(n) if ltag == "artistsort" else n
+                            for n in names_jp
+                        )
+                        if ltag == "artistsort" and not _is_latin_script(wiki_val):
+                            wiki_val = None
+                elif ltag == "titlesort" and do_romanize:
+                    try:
+                        preview = japanese_romanizer.romanize_file(
+                            fpath, force_titlesort=force_titlesort, dry_run=True,
+                            fallback_title=wiki_track["title"] if wiki_track else None,
+                        )
+                    except Exception as exc:
+                        print(f"  [LOCK-PREVIEW-ERR] {fname}  titlesort: {exc}")
+                        continue
+                    if preview["status"] in {"romanized", "overwritten"}:
+                        wiki_val = preview["titlesort_new"]
+                        existing = preview.get("titlesort_old")
+                # Empty locked artist fields may require an unfetched per-song
+                # TouhouDB lookup. Locks must still suppress that request.
 
                 if wiki_val is None:
                     continue
-                existing = (
-                    read_grouping(fpath) if ltag == "grouping"
-                    else _get_existing_tag(fpath, ltag)
-                )
                 # Only report when the wiki value differs from what's
                 # already on disk — a lock that agrees with the wiki is
                 # a no-op and not interesting.

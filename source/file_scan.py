@@ -39,6 +39,18 @@ def album_dir_for_file(path: str) -> str:
 # ---------------------------------------------------------------------------
 # Local file scanning
 # ---------------------------------------------------------------------------
+def track_sort_key(track: dict) -> tuple:
+    """Sort by numeric disc/track, then filename; unnumbered tracks go last."""
+    number = track.get("number")
+    return (
+        track.get("disc") or 1,
+        number is None,
+        number if number is not None else 0,
+        track.get("filename") or "",
+        track.get("path") or "",
+    )
+
+
 def _scan_single_dir(directory: str, disc: int) -> list[dict]:
     """
     Scan a single directory for supported music files and read their tags.
@@ -90,7 +102,8 @@ def scan_music_files(directory: str) -> list[dict]:
     "disc2"), each subdirectory is scanned separately and files are tagged
     with the corresponding disc number.  Otherwise the directory is scanned
     as a single-disc album (disc = 1).
-    Returns a list of file dicts:
+    Returns file dicts in numeric disc/track order, with filename ordering
+    for ties and unnumbered tracks (placed after numbered tracks per disc):
     {
         "path":     str,
         "filename": str,
@@ -115,10 +128,10 @@ def scan_music_files(directory: str) -> list[dict]:
         files: list[dict] = []
         for disc_num, disc_path in disc_dirs:
             files.extend(_scan_single_dir(disc_path, disc=disc_num))
-        return files
+        return sorted(files, key=track_sort_key)
 
     # Single-disc: scan the directory directly
-    return _scan_single_dir(directory, disc=1)
+    return sorted(_scan_single_dir(directory, disc=1), key=track_sort_key)
 
 
 # ---------------------------------------------------------------------------
@@ -342,10 +355,8 @@ def scan_album_for_view(directory: str) -> list[dict]:
 def _format_track_label(t: dict, multi_disc: bool) -> str:
     """Display label for a track row in the GUI tree view.
 
-    Pads the track number to two digits so that lexicographic sort
-    (which QTreeWidget uses on the column-0 string) matches numeric
-    order.  For multi-disc albums the disc number is prefixed, again
-    so that sort order matches "disc 1 first, then disc 2".
+    Pads the track number to at least two digits and prefixes the disc for
+    multi-disc albums. Sorting uses :func:`track_sort_key`, not this label.
     """
     num = t.get("number")
     title = t.get("title") or t.get("filename") or "?"
@@ -360,9 +371,8 @@ def _format_track_number(t: dict, multi_disc: bool) -> str:
     """Display label for the track-number-only column.
 
     Same numbering scheme as :func:`_format_track_label` (zero-padded,
-    disc-prefixed for multi-disc albums so lexicographic sort matches
-    numeric order) but without the title — used by the Tag Edit tab,
-    which has its own editable Title column.
+    disc-prefixed for multi-disc albums) but without the title — used by the
+    Tag Edit tab, which has its own editable Title column.
     """
     num = t.get("number")
     num_str = f"{num:02d}" if isinstance(num, int) else "??"
