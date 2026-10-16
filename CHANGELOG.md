@@ -41,6 +41,16 @@ Removed, or Security; do not use this file as a commit-by-commit log.
 
 ### Changed
 
+- Old-form (kyūjitai) and variant kanji are analyzed through their modern
+  forms, so 天體觀測 reads Tentai Kansoku instead of Ten Tei Kan Soku and
+  幻想鄉 is no longer left unresolved; the title's own spelling is
+  unchanged. The modern form is used only when it parses into fewer or
+  fewer-unknown words, so a word the dictionary already knows in its old
+  form keeps its reading. 龍 and simplified Chinese forms are not mapped.
+- A long-vowel mark that can only be a dash (at the start, after a space,
+  punctuation or Latin, between two kanji, or closing an earlier dash) is
+  written as a hyphen, so titles such as 夢 ー終焉ー get a sort key instead
+  of being skipped as unresolved. A mark after kana is always a long vowel.
 - Romanization joins compounds the dictionary splits into short units: a
   prefix now merges with the word it modifies (大妖精 → Daiyousei, 無条件 →
   Mujouken, 超新星 → Choushinsei) as suffixes already did, and a word whose

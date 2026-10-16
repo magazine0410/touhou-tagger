@@ -664,8 +664,8 @@ class ExplainTests(unittest.TestCase):
         self.assertTrue(r.explain_romaji('蓮の華')['review'][0].startswith("蓮 read as a person's name"))
         self.assertEqual(r.explain_romaji('比那名居天子')['review'],
                          ['比那名居 read kanji by kanji (Hi Ano Mei Kyo)'])
-        self.assertEqual(r.explain_romaji('幻想鄉')['review'],
-                         ['reading of 鄉 guessed outside the dictionary'])
+        self.assertEqual(r.explain_romaji('幻想龘')['review'],
+                         ['reading of 龘 guessed outside the dictionary'])
         # The 東方 substitution clears the name flag it resolved.
         first = r.explain_romaji('東方千年紀', use_overrides=False)['words'][0]
         self.assertEqual((first['written'], first['romaji'], first['flags']), ('東方', 'Touhou', []))
@@ -677,3 +677,89 @@ class ExplainIntegrationTests(unittest.TestCase):
 
     def test_real_dictionary_examples(self):
         ExplainTests.test_real_dictionary_examples(self)
+
+
+class VariantKanjiTests(unittest.TestCase):
+    """Item 6 of the 2026-10 review: old-form kanji analyzed through modern forms."""
+
+    def setUp(self):
+        for name in ('_TITLE_OVERRIDES', '_PHRASE_OVERRIDES', '_LOANWORDS_MAP'):
+            context = patch.object(r, name, {})
+            context.start()
+            self.addCleanup(context.stop)
+
+    def convert(self, rows_by_text):
+        text = next(iter(rows_by_text))
+        with patch.object(r, 'MECAB_AVAILABLE', True), \
+                patch.object(r, '_mecab', _FakeMeCab(rows_by_text)):
+            return r.to_romaji(text)
+
+    def test_mapping_is_one_to_one_and_leaves_ryuu_alone(self):
+        self.assertEqual(len(r._KANJI_VARIANT_PAIRS) % 2, 0)
+        self.assertNotIn(ord('龍'), r._KANJI_VARIANTS)
+        self.assertNotIn(ord('蔷'), r._KANJI_VARIANTS)
+        self.assertEqual('戀體鄉'.translate(r._KANJI_VARIANTS), '恋体郷')
+        for old, new in r._KANJI_VARIANTS.items():
+            self.assertEqual(len(new), 1, chr(old))
+
+    def test_modern_form_is_used_when_it_resolves_an_unknown(self):
+        rows = {'戀': [('戀', '名詞,普通名詞,*,*,*,*')],
+                '恋': [('恋', _feature('恋', 'コイ'))]}
+        self.assertEqual(self.convert(rows), 'Koi')
+
+    def test_modern_form_is_used_when_it_parses_into_fewer_words(self):
+        rows = {'天體': [('天', _feature('天', 'テン', goshu='漢')),
+                       ('體', _feature('體', 'テイ', goshu='漢'))],
+                '天体': [('天体', _feature('天体', 'テンタイ', goshu='漢'))]}
+        self.assertEqual(self.convert(rows), 'Tentai')
+
+    def test_old_form_is_kept_when_the_parse_does_not_improve(self):
+        rows = {'櫻花': [('櫻', _feature('櫻', 'サクラ')), ('花', _feature('花', 'ハナ'))],
+                '桜花': [('桜', _feature('桜', 'サクラ')), ('花', _feature('花', 'ハナ'))]}
+        self.assertEqual(self.convert(rows), 'Sakura Hana')
+        rows = {'醉月': [('醉月', _feature('醉月', 'スイゲツ', goshu='漢'))],
+                '酔月': [('酔', _feature('酔', 'ヨイ')), ('月', _feature('月', 'ツキ'))]}
+        self.assertEqual(self.convert(rows), 'Suigetsu')
+
+    @unittest.skipUnless(r.MECAB_AVAILABLE, 'MeCab/UniDic required')
+    def test_real_dictionary_examples(self):
+        cases = {'天體觀測': 'Tentai Kansoku', '亂れ咲き': 'Midaresaki', '神祕': 'Shinpi',
+                 '幻想鄉': 'Gensoukyou', '眞紅': 'Shinku', '蓬莱傳説': 'Hourai Densetsu',
+                 # the gate keeps a known old-form word's own split
+                 '櫻月夜': 'Sakura Tsukiyo', '蒼龍': 'Souryuu',
+                 '戀獄タランテラ': 'Ren Goku Tarantera'}
+        for title, expected in cases.items():
+            with self.subTest(title=title):
+                self.assertEqual(r.to_romaji(title, use_overrides=False), expected)
+        self.assertFalse(r._has_unresolved_output(r.to_romaji('幻想鄉'), '幻想鄉'))
+
+
+class DashMarkTests(unittest.TestCase):
+    """Item 10 of the 2026-10 review: a ー that can only be a dash."""
+
+    def test_dash_positions(self):
+        cases = {
+            '夢 ー終焉ー': '夢 -終焉-', 'ー終焉ー': '-終焉-', '夢ー終焉ー': '夢-終焉-',
+            '鋼琴符 ー 双鬼': '鋼琴符 - 双鬼', '-雷音ーBEAT': '-雷音-BEAT', '昴ーsubaru-': '昴-subaru-',
+            '空の境界The Horizonー': '空の境界The Horizon-',
+            # long vowels and lengthening are untouched
+            'スーパー図書館': 'スーパー図書館', 'セーラー服': 'セーラー服', 'らーめん': 'らーめん',
+            '夢ーー': '夢ーー', 'ああー': 'ああー', '限界突破ー！！': '限界突破ー！！',
+            # kanji + ー + kana stays ambiguous
+            '子守唄ーユカウラー': '子守唄ーユカウラー',
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(r._dash_long_vowel_marks(text), expected)
+
+    @unittest.skipUnless(r.MECAB_AVAILABLE, 'MeCab/UniDic required')
+    def test_real_dictionary_examples(self):
+        cases = {'夢 ー終焉ー': 'Yume -Shuuen-', 'ー終焉ー': '-Shuuen-',
+                 '鋼琴符 ー 双鬼': 'Koukinfu - Souoni', '夢ーー': 'Yumeee',
+                 '宇宙最後まで限界突破ー！！': 'Uchuu Saigo made Genkai Toppaa!!'}
+        for title, expected in cases.items():
+            with self.subTest(title=title):
+                self.assertEqual(r.to_romaji(title, use_overrides=False), expected)
+                self.assertFalse(r._has_unresolved_output(r.to_romaji(title), title))
+        ambiguous = '子守唄ーユカウラー'
+        self.assertTrue(r._has_unresolved_output(r.to_romaji(ambiguous), ambiguous))

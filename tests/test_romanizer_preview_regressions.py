@@ -55,8 +55,9 @@ class PreviewEngineTests(unittest.TestCase):
         title = "少女幻想ヶ原を往く"
         self.assertEqual(r.to_romaji(title, use_overrides=False), "Shoujo Gensou Ga Hara o Iku")
         self.assertFalse(r._has_unresolved_output(r.to_romaji(title), title))
-        # Unattached vowel marks are still unresolved; no invented vowel.
-        self.assertTrue(r._has_unresolved_output(r.to_romaji("ー"), "ー"))
+        # An unattached mark is a dash, never an invented vowel.
+        self.assertEqual(r.to_romaji("ー"), "-")
+        self.assertIn("ー", r.to_romaji("んー"))
         ambiguous = "子守唄ーユカウラー"
         self.assertTrue(r._has_unresolved_output(r.to_romaji(ambiguous), ambiguous))
 

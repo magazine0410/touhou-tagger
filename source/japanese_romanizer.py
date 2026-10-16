@@ -1434,6 +1434,55 @@ def _rendaku_bound(token: _Token) -> bool:
             and token.reading[1:] == token.lemma_reading[1:])
 
 
+# Old-form (kyūjitai) and other variant kanji paired with the modern form
+# UniDic indexes.  Only the analysis string is rewritten; the title's own
+# spelling is never changed.  龍 is deliberately absent: modern titles use it
+# as an ordinary character (蒼龍 Souryuu) and UniDic reads it well.  The
+# simplified Chinese forms that a few reviewed spelling aliases map per
+# title are also absent: mapping them here would turn Chinese-language
+# titles into Japanese sort keys instead of leaving them unresolved.
+_KANJI_VARIANT_PAIRS = (
+    "亞亜惡悪壓圧圍囲爲為醫医壹壱隱隠榮栄營営衞衛驛駅圓円緣縁艷艶鹽塩奧奥應応橫横歐欧毆殴黃黄溫温穩穏"
+    "假仮價価畫画會会懷懐繪絵壞壊槪概擴拡殼殻覺覚學学嶽岳樂楽渴渇勸勧卷巻寬寛歡歓罐缶觀観關関陷陥"
+    "巖巌顏顔氣気旣既歸帰龜亀僞偽戲戯犧犠舊旧據拠擧挙虛虚峽峡挾挟狹狭鄕郷鄉郷曉暁區区驅駆勳勲薰薫"
+    "徑径惠恵揭掲溪渓經経繼継莖茎螢蛍輕軽鷄鶏藝芸擊撃缺欠硏研縣県儉倹劍剣險険圈圏檢検權権獻献驗験"
+    "嚴厳效効廣広恆恒鑛鉱號号國国黑黒濟済碎砕齋斎劑剤櫻桜雜雑參参慘惨棧桟蠶蚕贊賛殘残絲糸齒歯兒児"
+    "辭辞濕湿實実寫写釋釈壽寿收収從従澁渋獸獣縱縦肅粛處処緖緒敍叙將将稱称涉渉燒焼證証奬奨條条淨浄"
+    "狀状疊畳孃嬢讓譲釀醸囑嘱觸触寢寝愼慎晉晋眞真盡尽圖図粹粋醉酔隨随髓髄數数樞枢瀨瀬聲声靜静齊斉"
+    "攝摂竊窃專専淺浅戰戦踐践錢銭潛潜纖繊禪禅雙双壯壮搜捜插挿爭争巢巣莊荘瘦痩裝装騷騒增増藏蔵臟臓"
+    "卽即屬属續続墮堕對対體体帶帯滯滞臺台瀧滝擇択澤沢單単擔担膽胆團団彈弾斷断癡痴遲遅晝昼蟲虫鑄鋳"
+    "廳庁徵徴聽聴敕勅鎭鎮遞逓鐵鉄點点轉転傳伝黨党盜盗燈灯當当鬪闘德徳獨独讀読屆届繩縄貳弐惱悩腦脳"
+    "霸覇廢廃拜拝賣売麥麦發発髮髪拔抜晚晩蠻蛮祕秘濱浜拂払佛仏倂併竝並變変邊辺步歩寶宝豐豊飜翻每毎"
+    "萬万麵麺默黙彌弥譯訳藥薬與与豫予餘余譽誉搖揺樣様謠謡來来賴頼亂乱覽覧獵猟綠緑淚涙壘塁禮礼"
+    "勵励戾戻靈霊齡齢曆暦歷歴戀恋鍊錬爐炉勞労郞郎樓楼錄録灣湾遙遥彥彦說説靑青淸清槇槙"
+)
+_KANJI_VARIANTS = {ord(old): new for old, new in
+                   zip(_KANJI_VARIANT_PAIRS[::2], _KANJI_VARIANT_PAIRS[1::2]) if old != new}
+
+
+def _modernize_variant_kanji(text: str) -> str:
+    """Analyze old-form kanji through their modern forms when that helps.
+
+    A title written with kyūjitai is read kanji by kanji or not at all
+    (天體觀測 as Ten Tei Kan Soku, 鄉 unresolved).  Rewriting the analysis
+    string with modern forms lets the dictionary see the compound.  The
+    rewrite is kept only when the parse improves: fewer characters in unknown words, or
+    the same with fewer tokens, or an unchanged parse that still contains
+    an unknown word.  So a word the dictionary already knows in its old
+    form (櫻 before 月夜, 戀 before 獄) keeps its own reading rather
+    than a different split of the modern spelling.
+    """
+    mapped = text.translate(_KANJI_VARIANTS)
+    if mapped == text:
+        return text
+    def score(tokens: list[_Token]) -> tuple[int, int]:
+        return sum(len(t.surface) for t in tokens if t.unknown), len(tokens)
+    before, after = score(_read_tokens(text)), score(_read_tokens(mapped))
+    if after < before or (after == before and before[0]):
+        return mapped
+    return text
+
+
 _CLASSICAL_ADJECTIVE_RE = re.compile(rf'[{_KANJI_CHARS}]+[ぁ-ゖ]{{0,16}}き')
 
 
@@ -1526,7 +1575,8 @@ def _japanese_segment_to_romaji(
     reviewed table, a numeral rule, a UniDic etymon or a guessed reading.
     """
     analysis = _normalize_hiragana_long_vowels(_normalize_native_katakana(
-        _normalize_katakana_okurigana(_expand_kana_iteration_marks(segment))))
+        _normalize_katakana_okurigana(_modernize_variant_kanji(
+            _expand_kana_iteration_marks(segment)))))
     tokens = _repair_classical_adjectives(
         analysis, segment, _read_reviewed_tokens(analysis, segment, use_overrides=use_overrides),
         use_overrides=use_overrides)
@@ -2068,6 +2118,46 @@ def _romanize_alias_target(text: str, *, restore_loanwords: bool = True,
     return "".join(result)
 
 
+_KANA_CHAR_RE = re.compile(f"[{_KANA_CHARS}]")
+
+
+def _dash_long_vowel_marks(text: str) -> str:
+    """Rewrite a ー that can only be a dash as a hyphen.
+
+    Titles use the long-vowel mark as a bracket or dash (夢 ー終焉ー,
+    雷音ーBEAT), which otherwise leaves the mark unresolved so no sort key
+    is written.  A lone mark is a dash at the start of the text, after a
+    space, punctuation or Latin, between two kanji, or after kanji before
+    digits or Latin; a closing mark after kanji at the end or before
+    punctuation is a dash only when an opening dash precedes it, so
+    expressive lengthening (限界突破ー！！) survives.  A mark after kana is
+    always a long vowel (スーパー図書館), and ーー is lengthening (夢ーー).
+    A mark after kanji before kana stays ambiguous and unresolved.
+    """
+    out = list(text)
+    open_dash = False
+    for match in re.finditer("ー+", text):
+        if len(match.group()) > 1:
+            continue
+        i = match.start()
+        prev = text[i - 1] if i else ""
+        nxt = text[i + 1:i + 2]
+        if prev and _KANA_CHAR_RE.fullmatch(prev):
+            continue
+        prev_kanji = bool(prev) and bool(_KANJI_RE.fullmatch(prev))
+        next_kana = bool(nxt) and bool(_KANA_CHAR_RE.fullmatch(nxt))
+        next_kanji = bool(nxt) and bool(_KANJI_RE.fullmatch(nxt))
+        closing = not nxt or nxt.isspace() or not nxt.isalnum()
+        dash = (not prev or prev.isspace() or not has_japanese(prev)
+                or next_kanji
+                or (prev_kanji and closing and open_dash)
+                or (prev_kanji and not next_kana and not closing))
+        if dash:
+            out[i] = "-"
+            open_dash = not open_dash
+    return "".join(out)
+
+
 def _japanese_text_to_romaji(text: str, *, use_overrides: bool = True,
                              restore_loanwords: bool = True,
                              report: list[dict] | None = None) -> str:
@@ -2077,6 +2167,7 @@ def _japanese_text_to_romaji(text: str, *, use_overrides: bool = True,
     before exclamation marks, but glued Japanese→Latin transitions inside
     a title (e.g. とAD).  Apply the same boundary rule to every fragment.
     """
+    text = _dash_long_vowel_marks(text)
     result_parts: list[str] = []
     last_end = 0
     first = True
