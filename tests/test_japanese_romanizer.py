@@ -120,7 +120,7 @@ class JapaneseRomanizerTests(unittest.TestCase):
         )
         self.assertEqual(
             japanese_romanizer.to_romaji(base + " (インスト)"),
-            expected_base + " ( Insuto )",
+            expected_base + " (Insuto)",
         )
         self.assertEqual(
             japanese_romanizer.to_romaji(base + "-Radio Edit"),
@@ -287,7 +287,10 @@ class _FakeMeCab:
 
     def parseToNode(self, text):
         node = None
-        for surface, feature in reversed(self.rows[text]):
+        # Reanalysis may query an alternative spelling. An unconfigured
+        # query supplies no lexical evidence, like a dictionary unknown.
+        rows = self.rows.get(text, [(text, "名詞,普通名詞,*,*,*,*")] if text else [])
+        for surface, feature in reversed(rows):
             node = SimpleNamespace(surface=surface, feature=feature, next=node,
                                    stat=0 if len(next(csv.reader([feature]))) > 6 else 1)
         return node
@@ -488,7 +491,9 @@ class RomanizerEngineTests(unittest.TestCase):
                 self.assertEqual(self.convert_tokens(rows), expected)
 
     def test_classical_ki_also_preserves_single_token_replacements(self):
-        rows = [("儚", _feature("儚", "ハカナ", "形容詞", conjugation="語幹-一般")),
+        # A kanji stem takes a reviewed spelling only when the dictionary
+        # marks the word foreign; the kana ending is eligible as written.
+        rows = [("儚", _feature("儚", "ハカナ", "形容詞", conjugation="語幹-一般", goshu="外")),
                 ("き", _feature("き", "キ"))]
         for mapping, expected in (({"hakana": "Reviewed"}, "Reviewed Ki"),
                                   ({"ki": "Reviewed"}, "Hakana Reviewed")):

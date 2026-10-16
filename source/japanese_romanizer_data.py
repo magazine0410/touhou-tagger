@@ -3,6 +3,23 @@
 
 _LOANWORDS: dict[str, str] = {
 
+    # Non-compositional borrowings and a misspelled UniDic etymon. These
+    # need lexical spelling knowledge, not a change to Hepburn conversion.
+    # In particular UniDic's "judgemant" is not an English spelling.
+    "jajjimento": "Judgment",
+    "hanguraidaa": "Hang Glider",
+    "puredetaa": "Predator",
+    "suriipuresu": "Sleepless",
+    "doreddofuru": "Dreadful",
+    "makaburu": "Macabre",
+    "disuasutaa": "Disaster",
+    "wanmoachansu": "One More Chance",
+    "merankoria": "Melancholia",
+    # UniDic gives the German etymon katharsis; the English borrowing is
+    # Catharsis. There is no general spelling rule converting k to c.
+    "katarushisu": "Catharsis",
+    "arerugii": "Allergy",  # German etymon Allergie, English borrowing Allergy
+
     # --- Touhou Project: characters ---
 
     # PC-98
@@ -16,6 +33,7 @@ _LOANWORDS: dict[str, str] = {
     "furandooru":     "Flandre",
     "sukaaretto":     "Scarlet",
     "pachuri":        "Patchouli",
+    "pachurii":       "Patchouli",
     "pachori":        "Patchouli",
     "chiruno":        "Cirno",
     "ruumia":         "Rumia",
@@ -782,6 +800,27 @@ _LOANWORDS: dict[str, str] = {
 }
 
 _TITLE_OVERRIDES: dict[str, str] = {
+    # Reviewed kana word boundaries absent from the general dictionary.
+    # The first title's Japanese spelling is confirmed by the circle:
+    # https://katikatimusic.wixsite.com/kkym-0010
+    "らくえんのうた": "Rakuen no Uta",
+    # https://kafkafuura.wordpress.com/2021/08/23/yuureisen-no-uta/
+    "ゆうれいせんのうた": "Yuureisen no Uta",
+    # These retain the written kana sounds; no speculative translation.
+    "まじゅつしのうた": "Majutsushi no Uta",
+    "しゃんはいこうちゃふぃーるど": "Shanhai Koucha Fiirudo",
+    "なないろふぁんたじー": "Nanairo Fantajii",
+    # A coined みょん + な pun; ordinary parsing treats んな as a new word.
+    # Japanese title confirmed at https://shm.jpn.org/gtt/ (track 5).
+    "今日も今日とてみょんな道": "Kyou mo Kyou tote Myonna Michi",
+    # Credit context identifies the circle Sally, not the garment sari.
+    "Melody (サリー acoustic cover)": "Melody (Sally acoustic cover)",
+    "Melody (サリー)": "Melody (Sally)",
+    "スカル キャット": "Skull Cat",
+    # The distributor supplies this English title; phonetic conversion
+    # cannot infer it from the deliberately playful hiragana spelling.
+    # https://linkco.re/ttPFHUxN?lang=en (track 8)
+    "は～りぃすたーふぃっしゅ": "Hurry, Starfish",
     # Official Touhou game names.  These are the conventional title
     # readings, rather than whatever general-purpose MeCab happens to
     # choose for the same kanji in ordinary prose.  The phrase table below
@@ -919,6 +958,9 @@ _TITLE_OVERRIDES: dict[str, str] = {
 # aliases, not Chinese translations. Unverified readings such as 橤の想い
 # stay unresolved until there is evidence for the artist's intended reading.
 _TITLE_SPELLING_ALIASES: dict[str, str] = {
+    # Library transcription error, confirmed on the official KKYM-0010
+    # track list above. This changes only the sort key, never the title tag.
+    "らくえんおうた": "らくえんのうた",
     # Source-supported Japanese identities, reviewed 2026-09-09. These
     # exact title spellings are intentional exceptions to the language gate;
     # they do not establish that the same characters in other titles are JP.
@@ -992,13 +1034,48 @@ _TITLE_SPELLING_ALIASES: dict[str, str] = {
 }
 
 # Phrase-level overrides: tuple of MeCab surface strings → Romaji.
-# Applied before loanword matching, longest-match-first (up to 4 tokens).
+# Applied before loanword matching, longest written phrase first.
 # Use this when MeCab splits a known compound into pieces that loanword
 # lookup cannot reassemble (e.g. a coined place name with no UniDic entry).
-# Keys are tuples of exact surface forms as MeCab produces them.
+# Keys retain the legacy tuple format; the engine matches their combined
+# written text, independent of how a dictionary version divides tokens.
 # Example:
 #   ("幻想", "郷"): "Gensokyo",
 _PHRASE_OVERRIDES: dict[tuple, str] = {
+    # Conventional Touhou names cannot be inferred from individual kanji.
+    # English Touhou Wiki character pages: Sakuya_Izayoi, Kogasa_Tatara,
+    # Yuuka_Kazami, Fujiwara_no_Mokou, Aya_Shameimaru and Tewi_Inaba.
+    ("咲夜",): "Sakuya",
+    ("小傘",): "Kogasa",
+    ("幽香",): "Yuuka",
+    ("妹紅",): "Mokou",
+    ("藤原", "妹紅"): "Fujiwara no Mokou",
+    ("射命丸",): "Shameimaru",
+    # 文 is Aya in this full name, but normally bun in ordinary Japanese.
+    ("射命丸", "文"): "Shameimaru Aya",
+    ("射命丸", " ", "文"): "Shameimaru Aya",
+    ("てゐ",): "Tewi",
+    # The same review exposed these names in the surrounding titles.
+    # https://en.touhouwiki.net/wiki/Youmu_Konpaku
+    ("妖夢",): "Youmu",
+    # https://en.touhouwiki.net/wiki/Kyouko_Kasodani
+    ("幽谷", "響子"): "Kasodani Kyouko",
+    # https://en.touhouwiki.net/wiki/Embodiment_of_Scarlet_Devil/Music
+    ("月時計",): "Tsukidokei",
+    # https://en.touhouwiki.net/wiki/Scarlet_Devil_Mansion
+    ("紅魔館",): "Koumakan",
+    # Coined name; retain the written sounds rather than filler syllables.
+    ("えそてりあ",): "Esoteria",
+    # Narrowly scoped homophone/name choices, not global English guesses.
+    # https://touhoudb.com/Al/31813
+    ("ファントムセイバー",): "Phantom Saber",
+    # https://music.atainchi.com/special/pp/
+    ("パラレルパレット",): "Parallel Palette",
+    # Skull is the intended motif here; standalone スカル stays phonetic
+    # or dictionary-derived rather than imposing this reading everywhere.
+    ("スカルマスカレード",): "Skull Masquerade",
+    ("スカル", "キャット"): "Skull Cat",
+    ("クロノ", "・", "トリガー"): "Chrono Trigger",
     # Official Touhou game names.  Keep these phrase-level forms in sync
     # with the bare-title overrides above so 東方-prefixed and embedded game
     # names use the same conventional readings.

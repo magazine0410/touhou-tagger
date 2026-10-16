@@ -11,6 +11,17 @@ Removed, or Security; do not use this file as a commit-by-commit log.
 
 ### Added
 
+- `japanese_romanizer.explain_romaji()`: romanizes a title and reports, per
+  word, where its reading came from (reviewed title/phrase/loanword table,
+  numeral rule, UniDic etymon spelling, or the dictionary) together with
+  plain-language review reasons: a kanji reading guessed outside the
+  dictionary, a word read as a person's name although the dictionary also
+  knows it as something else, or a run of kanji read one by one. Reviewed
+  replacements are never flagged. `romanize_file()` results now carry the
+  same `review` list, the Romanise log prints a `review:` line under such
+  tracks, and the per-album summary counts them, so QC can be aimed at the
+  titles that were partly guessed instead of every title.
+
 - "Force overwrite staff tags" (GUI checkbox; `--force-credits` on the CLI):
   makes the wiki authoritative for `arranger`, `vocalist`, and `lyricist`
   instead of preserving whatever the file already has, so a re-run can
@@ -29,6 +40,18 @@ Removed, or Security; do not use this file as a commit-by-commit log.
   `--no-wait` stops instead, as does any run without a terminal on stdin.
 
 ### Changed
+
+- Romanization joins compounds the dictionary splits into short units: a
+  prefix now merges with the word it modifies (大妖精 → Daiyousei, 無条件 →
+  Mujouken, 超新星 → Choushinsei) as suffixes already did, and a word whose
+  reading is the rendaku form of its own lemma joins the element before it
+  (無縁塚 → Muenzuka, 三途川 → Sanzugawa, ほたる囃子 → Hotarubayashi).
+  The ordinal 第 stays its own word (Dai 8 Ban, Dai Ichininsha).
+- A two-kanji Sino-Japanese noun is no longer read as a surname when the
+  dictionary's common-noun entry is clearly the more frequent word, so 東方
+  in titles the override tables do not cover reads Touhou instead of Toubou
+  or Higashikata. Names that are themselves the frequent reading (西行,
+  望月, 千秋) are untouched.
 
 - Japanese title romanization now reads recognized number/counter expressions
   as complete words, including Arabic-written forms such as `2人` → `Futari`.
