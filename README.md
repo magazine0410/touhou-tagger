@@ -112,7 +112,10 @@ Optional features need additional dependencies:
   `python -m pip install -r requirements/cookie-auto-pull.txt`
 - Japanese title romanisation:
   `python -m pip install -r requirements/romanisation.txt`, then
-  `python -m unidic download`
+  `python -m unidic download` to fetch the full UniDic dictionary. If that
+  dictionary is missing, the smaller `unidic-lite` one is used when it is
+  installed (`python -m pip install unidic-lite`, no download step); see
+  [DEPENDENCIES.md](docs/DEPENDENCIES.md#romanisation-dictionary)
 - CUE-based FLAC splitting: install FFmpeg and FLAC (including `metaflac`)
   through your operating system's package manager:
   **Fedora:** `sudo dnf install ffmpeg flac` (you may need to install full ffmpeg from the [RPM Fusion](https://rpmfusion.org/) repo)
@@ -129,6 +132,11 @@ python -m pip install -r requirements/all.txt
 python -m playwright install chromium
 python -m unidic download
 ```
+
+The last command downloads the full UniDic dictionary used for romanisation.
+`python -m pip install unidic-lite` can replace it. That dictionary is smaller
+and older, needs no download, and reads some titles differently from the full
+one, which is preferred and is used when both are installed.
 
 CUE-based FLAC splitting additionally needs the system `ffmpeg` and `flac`
 tools (see the optional-features note above); everything else is covered by the

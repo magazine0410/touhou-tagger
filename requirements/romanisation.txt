@@ -1,5 +1,9 @@
 # Optional Japanese title romanisation.  Run `python -m unidic download`
-# after installing this group.
+# after installing this group to fetch the full UniDic dictionary, which is
+# the preferred one.  If that download is skipped, the romaniser falls back
+# to the smaller, older unidic-lite dictionary when it is installed.  That
+# package is deliberately not listed here; install it by hand with
+# `python -m pip install unidic-lite`.  See docs/DEPENDENCIES.md.
 mecab-python3==1.0.12
 unidic==1.1.0
 pykakasi==2.3.0
