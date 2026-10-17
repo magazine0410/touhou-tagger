@@ -86,7 +86,7 @@ class BaseEngineIntegrationTests(unittest.TestCase):
             '泣いても': 'Naite mo', '帰れば': 'Kaereba',
             '待って': 'Matte', '泳いで': 'Oyoide',
             '行かなくちゃ': 'Ikanakucha', '食べちゃ': 'Tabecha', '死んじゃ': 'Shinja',
-            'おじょうさまDAYS': 'Ojousama DAYS',
+            'おじょうさまDAYS': 'Ojou-sama DAYS',
             'お祓い': 'Oharai', 'ご褒美': 'Gohoubi',
             'お別れ': 'Owakare', 'お 別れ': 'O Wakare',
             'お・別れ': 'O Wakare', '新世界': 'Shinsekai', '第一人者': 'Dai Ichininsha',
@@ -763,3 +763,116 @@ class DashMarkTests(unittest.TestCase):
                 self.assertFalse(r._has_unresolved_output(r.to_romaji(title), title))
         ambiguous = '子守唄ーユカウラー'
         self.assertTrue(r._has_unresolved_output(r.to_romaji(ambiguous), ambiguous))
+
+
+class ScriptBoundaryTests(unittest.TestCase):
+    """Item 9 of the 2026-10 review: a soft hiragana/katakana boundary."""
+
+    def test_boundaries_and_cuts(self):
+        self.assertEqual(r._script_boundaries('スナックさなえ'), (4,))
+        self.assertEqual(r._script_boundaries('けもフレこんさーと'), (2, 4))
+        self.assertEqual(r._script_boundaries('ヤバい夜'), (2,))
+        self.assertEqual(r._script_boundaries('夢'), ())
+        # A fake tagger without the lattice API falls back to the plain parse.
+        rows = [('ヤバ', _feature('ヤバ', 'ヤバ')), ('い', _feature('い', 'イ'))]
+        with patch.object(r, '_mecab', _FakeMeCab({'ヤバい': rows})):
+            self.assertEqual([n[0] for n in r._parse_nodes('ヤバい', (2,))], ['ヤバ', 'い'])
+
+    @unittest.skipUnless(r.MECAB_AVAILABLE, 'MeCab/UniDic required')
+    def test_katakana_candidate_cannot_fuse_with_a_katakana_neighbour(self):
+        cases = {'スナックさなえ': 'Snack Sanae', 'まりぃアリィ': 'Marii Arii',
+                 'けもフレこんさーと': 'Ke mo Fure Concert',
+                 'カレイナルせんせーしょん！！': 'Karei Naru Senseeshon!!'}
+        for title, expected in cases.items():
+            with self.subTest(title=title):
+                self.assertEqual(r.to_romaji(title), expected)
+
+    @unittest.skipUnless(r.MECAB_AVAILABLE, 'MeCab/UniDic required')
+    def test_free_parse_and_mixed_script_words_are_untouched(self):
+        cases = {'おもいでディストーション': 'Omoide Distortion', '間に合わんナイト': 'Maniawan Night',
+                 'ヤバい夜': 'Yabai Yoru', 'サボる日': 'Saboru Hi',
+                 'スーパー図書館': 'Super Toshokan'}
+        for title, expected in cases.items():
+            with self.subTest(title=title):
+                self.assertEqual(r.to_romaji(title), expected)
+
+    @unittest.skipUnless(r.MECAB_AVAILABLE, 'MeCab/UniDic required')
+    def test_candidate_may_not_cut_an_unknown_across_a_reviewed_spelling(self):
+        with patch.object(r, '_LOANWORDS_MAP', {'nue': 'Nue', 'haato': 'Heart', 'supaaku': 'Spark'}):
+            self.assertEqual(r.to_romaji('ぬえのカオスな旋律', restore_loanwords=False),
+                             'Nue no Kaosu Na Senritsu')
+            # A candidate that still covers the reviewed span is accepted.
+            self.assertEqual(r.to_romaji('微熱はーとすぱーく'), 'Binetsu Heart Spark')
+        # Without reviewed tables the veto is inert and the candidate wins.
+        self.assertEqual(r.to_romaji('ぬえのカオスな旋律', use_overrides=False,
+                                     restore_loanwords=False),
+                         'Nu Eno Kaosu Na Senritsu')
+
+
+class HonorificSuffixTests(unittest.TestCase):
+    """Address honorifics are hyphenated after the name."""
+
+    def setUp(self):
+        for name in ('_TITLE_OVERRIDES', '_PHRASE_OVERRIDES', '_LOANWORDS_MAP'):
+            context = patch.object(r, name, {})
+            context.start()
+            self.addCleanup(context.stop)
+
+    def convert(self, rows, loanwords=None):
+        text = ''.join(surface for surface, _ in rows)
+        with patch.object(r, 'MECAB_AVAILABLE', True), \
+                patch.object(r, '_mecab', _FakeMeCab({text: rows})), \
+                patch.object(r, '_LOANWORDS_MAP', loanwords or {}):
+            return r.to_romaji(text)
+
+    def test_honorific_after_a_name_or_noun(self):
+        san = _feature('さん', 'サン', '接尾辞', '名詞的')
+        cases = [
+            ([('霊夢', _feature('霊夢', 'レイム', '名詞', '固有名詞', goshu='固')), ('さん', san)], 'Reimu-san'),
+            ([('猫', _feature('猫', 'ネコ')), ('ちゃん', _feature('ちゃん', 'チャン', '接尾辞', '名詞的'))], 'Neko-chan'),
+            ([('神', _feature('神', 'カミ')), ('様', _feature('様', 'サマ', '接尾辞', '名詞的'))], 'Kami-sama'),
+            ([('影狼', _feature('影狼', 'カゲロウ', '名詞', '固有名詞', goshu='固')),
+              ('殿', _feature('殿', 'ドノ', '接尾辞', '名詞的'))], 'Kagerou-dono'),
+            # A later suffix still attaches to the honorific.
+            ([('咲夜', _feature('咲夜', 'サクヤ', '名詞', '固有名詞', goshu='固')), ('さん', san),
+              ('達', _feature('達', 'タチ', '接尾辞', '名詞的'))], 'Sakuya-santachi'),
+            # A reviewed name followed by an honorific the dictionary read as a noun.
+            ([('まりさ', _feature('まりさ', 'マリサ', '名詞', '固有名詞', goshu='固')),
+              ('ちゃん', _feature('ちゃん', 'チャン', '名詞', '普通名詞'))], 'Marisa-chan'),
+        ]
+        for rows, expected in cases[:-1]:
+            with self.subTest(text=''.join(s for s, _ in rows)):
+                self.assertEqual(self.convert(rows), expected)
+        self.assertEqual(self.convert(cases[-1][0], {'marisa': 'Marisa'}), cases[-1][1])
+
+    def test_lookalikes_keep_their_reading(self):
+        cases = [
+            # 君 the pronoun and 殿 read as a palace are not honorifics.
+            ([('君', _feature('君', 'キミ', '代名詞', '*')), ('と', _feature('と', 'ト', '助詞', '格助詞'))], 'Kimi to'),
+            ([('地霊', _feature('地霊', 'チレイ', goshu='漢')),
+              ('殿', _feature('殿', 'デン', '接尾辞', '名詞的', goshu='漢'))], 'Chireiden'),
+            # A single lexical word is not split, and digits take no honorific.
+            ([('赤ちゃん', _feature('赤ちゃん', 'アカチャン'))], 'Akachan'),
+            ([('3', '名詞,数詞,*,*,*,*'), ('さん', _feature('さん', 'サン', '接尾辞', '名詞的'))], '3 San'),
+            ([('様', _feature('様', 'サマ', '接尾辞', '名詞的'))], 'Sama'),
+            # A geminate before the suffix is a word of its own.
+            ([('おっ', _feature('おっ', 'オッ', '感動詞', '一般')),
+              ('さん', _feature('さん', 'サン', '接尾辞', '名詞的'))], 'Ossan'),
+        ]
+        for rows, expected in cases:
+            with self.subTest(text=''.join(s for s, _ in rows)):
+                self.assertEqual(self.convert(rows), expected)
+
+
+@unittest.skipUnless(r.MECAB_AVAILABLE, 'MeCab/UniDic required')
+class HonorificIntegrationTests(unittest.TestCase):
+    """Hyphenated honorifics with the real dictionary and the shipped tables."""
+
+    def test_real_dictionary_examples(self):
+        cases = {'メイドウィッチまりさちゃん': 'Maid Witchi Marisa-chan', '霊夢さん': 'Reimu-san',
+                 'お嬢様': 'Ojou-sama', 'チルノちゃん': 'Cirno-chan', '赤ちゃん': 'Akachan',
+                 'おっさん十字軍': 'Ossan Juuji Gun', '君と僕': 'Kimi to Boku',
+                 '東方地霊殿': 'Touhou Chireiden'}
+        for title, expected in cases.items():
+            with self.subTest(title=title):
+                self.assertEqual(r.to_romaji(title), expected)

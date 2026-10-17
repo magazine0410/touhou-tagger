@@ -48,6 +48,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import contextvars
 import csv
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
@@ -323,7 +324,36 @@ def _normalize_katakana_okurigana(text: str) -> str:
 _HIRAGANA_WORD_RE = re.compile(r"[ぁ-ゖー]{3,}")
 
 
-def _normalize_hiragana_long_vowels(text: str) -> str:
+def _breaks_reviewed_match(before: list[_Token], after: list[_Token],
+                           start: int, end: int) -> bool:
+    """True when a candidate parse cuts an unknown word across a reviewed spelling.
+
+    ぬえ + の admits the reviewed Nue; the katakana candidate's ヌ + エノ
+    (unknown) would lose it.  A candidate that covers the same span with a
+    match of its own (ハート for はーと) or with a known word is fine.
+    """
+    def matches(tokens: list[_Token]) -> set[tuple[int, int]]:
+        found = set()
+        for i in range(len(tokens)):
+            for size in range(1, 5):
+                group = tokens[i:i + size]
+                if len(group) < size:
+                    break
+                if group[-1].end <= start or group[0].start >= end:
+                    continue
+                if _loanword_match(group) is not None:
+                    found.add((group[0].start, group[-1].end))
+        return found
+    kept = matches(after)
+    for a, b in matches(before):
+        for t in after:
+            if (t.unknown and t.start < b and t.end > a and (t.start, t.end) != (a, b)
+                    and not any(m[0] <= t.start and m[1] >= t.end for m in kept)):
+                return True
+    return False
+
+
+def _normalize_hiragana_long_vowels(text: str, *, use_overrides: bool = True) -> str:
     """Choose a less fragmented analysis without changing the output spelling.
 
     ー also occurs in native words and beside particles.  Try ordinary vowel
@@ -455,6 +485,9 @@ def _normalize_hiragana_long_vowels(text: str) -> str:
             if original_context is None:
                 original_context = context
             contextual = analyze_context(candidate)
+            if use_overrides and _LOANWORDS_MAP and _breaks_reviewed_match(
+                    original_context, contextual, match.start(), match.end()):
+                continue
             particles = [(t.start, t.end) for i, t in enumerate(original_context)
                          if i and t.pos == "助詞"
                          and t.original in {"は", "が", "を", "の", "に", "へ", "も", "と", "で"}
@@ -728,6 +761,55 @@ class _Token:
     ambiguous_name: bool = field(default=False, compare=False)
 
 
+# Positions in the segment being romanized that no token may cross.  Set by
+# _japanese_segment_to_romaji and consulted for every parse of a derived
+# analysis string of the same length: where the title switches between
+# hiragana and katakana, a derived string that has katakana on both sides
+# (a normalizer's katakana candidate) must not fuse the two words
+# (スナックさなえ, けもフレこんさーと).  The original string keeps its scripts,
+# so mixed-script dictionary words (ヤバい, サボる) are never cut, and
+# strings of another length (isolated runs, phrase portions) are unaffected.
+_SEGMENT_BOUNDARIES: contextvars.ContextVar[tuple[int, tuple[int, ...]]] = \
+    contextvars.ContextVar("segment_boundaries", default=(0, ()))
+_SCRIPT_EDGE_RE = re.compile(r"(?<=[ぁ-ゖ])(?=[ァ-ヺ])|(?<=[ァ-ヺ])(?=[ぁ-ゖ])")
+
+
+def _script_boundaries(segment: str) -> tuple[int, ...]:
+    return tuple(m.start() for m in _SCRIPT_EDGE_RE.finditer(segment))
+
+
+def _parse_nodes(text: str, cuts: tuple[int, ...]) -> list[tuple[str, str, int]]:
+    """MeCab nodes as (surface, feature, stat); no token crosses a cut.
+
+    Partial parsing keeps both sides in one lattice with full context; it
+    only forbids a token from spanning the cut.  Without cuts, or when the
+    lattice API is unavailable (a fake tagger), the plain parse is used.
+    """
+    if cuts and "\n" not in text and "\t" not in text:
+        try:
+            lattice = MeCab.Lattice()
+            lattice.set_request_type(MeCab.MECAB_PARTIAL)
+            edges = (0, *cuts, len(text))
+            lattice.set_sentence("\n".join(text[a:b] for a, b in zip(edges, edges[1:])) + "\nEOS\n")
+            if _mecab.parse(lattice):
+                nodes = []
+                node = lattice.bos_node().next
+                while node and node.stat != MeCab.MECAB_EOS_NODE:
+                    nodes.append((node.surface, node.feature, node.stat))
+                    node = node.next
+                if "".join(surface for surface, _, _ in nodes) == text:
+                    return nodes
+        except (AttributeError, NameError, RuntimeError, TypeError):
+            pass
+    nodes = []
+    node = _mecab.parseToNode(text)
+    while node:
+        if node.surface:
+            nodes.append((node.surface, node.feature, node.stat))
+        node = node.next
+    return nodes
+
+
 def _read_tokens(text: str, original: str | None = None) -> list[_Token]:
     """Copy MeCab nodes while retaining written spans and surface readings."""
     original = text if original is None else original
@@ -736,21 +818,23 @@ def _read_tokens(text: str, original: str | None = None) -> list[_Token]:
     expanded_original = _expand_kana_iteration_marks(original)
     tokens: list[_Token] = []
     offset = 0
-    node = _mecab.parseToNode(text)
-    while node:
-        if node.surface:
-            node_start = text.index(node.surface, offset)
-            offset = node_start + len(node.surface)
-            parts = next(csv.reader([node.feature]))
-            unknown = node.stat == 1
+    length, boundaries = _SEGMENT_BOUNDARIES.get()
+    cuts = tuple(i for i in boundaries if len(text) == length
+                 and "ァ" <= text[i - 1] <= "ヺ" and "ァ" <= text[i] <= "ヺ")
+    for node_surface, node_feature, node_stat in _parse_nodes(text, cuts):
+        if node_surface:
+            node_start = text.index(node_surface, offset)
+            offset = node_start + len(node_surface)
+            parts = next(csv.reader([node_feature]))
+            unknown = node_stat == 1
             # The dictionary separates ・ from the words it knows, but its
             # unknown-word grouping keeps the dot inside one katakana run
             # (ヘカーティア・ラピスラズリ).  Split such a run so each name is
             # read, capitalized and restored on its own, with the dot as
             # the symbol token a known word would have beside it.
-            if unknown and "・" in node.surface:
+            if unknown and "・" in node_surface:
                 pieces = [(node_start + m.start(), node_start + m.end())
-                          for m in re.finditer(r"・|[^・]+", node.surface)]
+                          for m in re.finditer(r"・|[^・]+", node_surface)]
             else:
                 pieces = [(node_start, offset)]
             for start, end in pieces:
@@ -760,7 +844,7 @@ def _read_tokens(text: str, original: str | None = None) -> list[_Token]:
                     tokens.append(_Token(surface, source, surface, "補助記号",
                                          "一般", "記号", "*", start, end))
                     continue
-                reading = _get_reading(node.feature)
+                reading = _get_reading(node_feature)
                 if _KANA_ONLY_RE.fullmatch(source):
                     # Kana already specifies its reading, including expressive ー
                     # and v/b distinctions that dictionary entries may normalize.
@@ -773,7 +857,7 @@ def _read_tokens(text: str, original: str | None = None) -> list[_Token]:
                             and pronunciation == reading[:-1] + "ワ"):
                         reading = pronunciation
                     elif source in _KATAKANA_OKURIGANA_EXEMPT:
-                        reading = _get_reading(node.feature) or source
+                        reading = _get_reading(node_feature) or source
                 elif surface == "々" and tokens:
                     reading = tokens[-1].reading
                 elif not reading:
@@ -789,7 +873,6 @@ def _read_tokens(text: str, original: str | None = None) -> list[_Token]:
                     lemma=parts[7] if len(parts) > 7 else "",
                     pos3=parts[2] if len(parts) > 2 else "",
                 ))
-        node = node.next
     return _prefer_common_noun_readings(text, tokens)
 
 
@@ -905,7 +988,8 @@ def _read_reviewed_tokens(analysis: str, original: str, *, use_overrides: bool) 
         # A newly established name boundary can resolve a neighbouring
         # fragmented word. Keep valid context-sensitive particles as-is.
         if fragments(result) or (len(result) > 1 and _KANA_ONLY_RE.fullmatch(original[start:end])):
-            candidate = _read_tokens(_normalize_hiragana_long_vowels(analysis[start:end]),
+            candidate = _read_tokens(_normalize_hiragana_long_vowels(analysis[start:end],
+                                                                    use_overrides=use_overrides),
                                      original[start:end])
             if candidate and all(not t.unknown for t in candidate) and (
                     fragments(candidate) < fragments(result)
@@ -1483,6 +1567,13 @@ def _modernize_variant_kanji(text: str) -> str:
     return text
 
 
+# Address honorifics are written hyphenated after the name (Reimu-san,
+# Marisa-chan, Kami-sama) rather than fused into it.  Keyed by written form
+# with the reading that makes it an honorific (君 as クン, 殿 as ドノ).
+_HONORIFIC_SUFFIXES = {"さん": "サン", "ちゃん": "チャン", "くん": "クン", "君": "クン",
+                       "さま": "サマ", "様": "サマ", "殿": "ドノ"}
+
+
 _CLASSICAL_ADJECTIVE_RE = re.compile(rf'[{_KANJI_CHARS}]+[ぁ-ゖ]{{0,16}}き')
 
 
@@ -1568,6 +1659,23 @@ def _japanese_segment_to_romaji(
     segment: str, first_in_title: bool = False, *, use_overrides: bool = True,
     restore_loanwords: bool = True, report: list[dict] | None = None,
 ) -> str:
+    """Romanize one Japanese segment; see :func:`_romanize_segment`.
+
+    Records the segment's hiragana/katakana edges as parse boundaries
+    (``_SEGMENT_BOUNDARIES``) for the duration of the call.
+    """
+    token = _SEGMENT_BOUNDARIES.set((len(segment), _script_boundaries(segment)))
+    try:
+        return _romanize_segment(segment, first_in_title, use_overrides=use_overrides,
+                                 restore_loanwords=restore_loanwords, report=report)
+    finally:
+        _SEGMENT_BOUNDARIES.reset(token)
+
+
+def _romanize_segment(
+    segment: str, first_in_title: bool = False, *, use_overrides: bool = True,
+    restore_loanwords: bool = True, report: list[dict] | None = None,
+) -> str:
     """Analyze readings before applying replacements and word-boundary rules.
 
     ``report``, when given, receives one dict per rendered word (see
@@ -1576,7 +1684,7 @@ def _japanese_segment_to_romaji(
     """
     analysis = _normalize_hiragana_long_vowels(_normalize_native_katakana(
         _normalize_katakana_okurigana(_modernize_variant_kanji(
-            _expand_kana_iteration_marks(segment)))))
+            _expand_kana_iteration_marks(segment)))), use_overrides=use_overrides)
     tokens = _repair_classical_adjectives(
         analysis, segment, _read_reviewed_tokens(analysis, segment, use_overrides=use_overrides),
         use_overrides=use_overrides)
@@ -1794,6 +1902,19 @@ def _japanese_segment_to_romaji(
                 merge = True
         merge = merge or index in contracted_boundaries
         addition = word.text
+        if (adjacent and previous is not None and not word.opaque and not after_digits
+                and len(word.tokens) == 1
+                and _HONORIFIC_SUFFIXES.get(current.original) == current.reading
+                and (current.pos == "接尾辞"
+                     or (current.pos == "名詞" and (previous.opaque
+                                                  or previous.tokens[-1].sub_pos == "固有名詞")))
+                and (previous.opaque
+                     or previous.tokens[-1].pos in ("名詞", "代名詞", "接尾辞", "形状詞"))
+                and not previous.reading.endswith(("ッ", "っ"))):
+            # A geminate before the suffix is a word of its own (おっさん,
+            # 坊っちゃん), not a name plus honorific.
+            merge = True
+            addition = "-" + addition.lower()
         if adjacent and previous is not None and not previous.opaque and not word.opaque:
             # UniDic sometimes splits the classical adjective 儚き into the
             # adjective stem 儚 and a noun/verb き.  Repair only an exact,

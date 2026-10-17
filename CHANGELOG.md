@@ -41,6 +41,16 @@ Removed, or Security; do not use this file as a commit-by-commit log.
 
 ### Changed
 
+- Address honorifics are written hyphenated after the name instead of fused
+  into it: 霊夢さん → Reimu-san, まりさちゃん → Marisa-chan, 神様 → Kami-sama,
+  影狼殿 → Kagerou-dono. Covers さん, ちゃん, くん/君, さま/様 and 殿 as nominal
+  suffixes; lexical words such as 赤ちゃん and 地霊殿 are unaffected.
+- A hiragana word next to a katakana word can no longer be fused with it
+  while the romanizer tries a katakana reading of the hiragana (スナックさなえ
+  was Sunakkusanae, now Snack Sanae). The original spelling is never cut,
+  so mixed-script words such as ヤバい keep their dictionary reading. A
+  katakana candidate that would cut an unknown word across a reviewed
+  spelling is also rejected (ぬえの stays Nue no).
 - Old-form (kyūjitai) and variant kanji are analyzed through their modern
   forms, so 天體觀測 reads Tentai Kansoku instead of Ten Tei Kan Soku and
   幻想鄉 is no longer left unresolved; the title's own spelling is
