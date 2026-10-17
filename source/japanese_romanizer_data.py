@@ -69,6 +69,7 @@ _LOANWORDS: dict[str, str] = {
     "satori":         "Satori",
     "koishi":         "Koishi",
     "rin":            "Rin",
+    "orin":           "Orin",   # おりん, Rin Kaenbyou's nickname (honorific お + りん)
     "utsuho":         "Utsuho",
     "kisume":         "Kisume",
     "yamame":         "Yamame",
