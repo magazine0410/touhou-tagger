@@ -83,6 +83,12 @@ Removed, or Security; do not use this file as a commit-by-commit log.
 
 ### Fixed
 
+- Reviewed exact-title spellings are applied even when MeCab is not
+  installed, and the romanizer's lattice helpers tolerate a missing MeCab
+  module instead of raising. The offline test suite now passes on runners
+  without MeCab (as GitHub Actions), and its lock-store test no longer
+  assumes POSIX paths on Windows.
+
 - Romanizer title overrides also match delimited titles in annotations;
   reviewed Japanese spelling aliases handle selected Chinese character
   variants without globally converting Chinese text. Added supported rare

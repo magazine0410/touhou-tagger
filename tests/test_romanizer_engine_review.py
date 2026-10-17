@@ -290,7 +290,8 @@ class ReviewFixTests(unittest.TestCase):
                ('夜', _feature('夜', 'ヨル'))]
         new = [('懐かしい', _feature('懐かしい', 'ナツカシイ', '形容詞', '一般')),
                ('夜', _feature('夜', 'ヨル'))]
-        with patch.object(r, '_mecab', _FakeMeCab({'懐かしき夜': old, '懐かしい夜': new})):
+        with patch.object(r, 'MECAB_AVAILABLE', True), \
+                patch.object(r, '_mecab', _FakeMeCab({'懐かしき夜': old, '懐かしい夜': new})):
             with patch.object(r, '_LOANWORDS_MAP', {'futokoro': 'Reviewed'}):
                 self.assertEqual(r.to_romaji('懐かしき夜'), 'Reviewed ka shiki Yoru')
             self.assertEqual(r.to_romaji('懐かしき夜'), 'Natsukashiki Yoru')

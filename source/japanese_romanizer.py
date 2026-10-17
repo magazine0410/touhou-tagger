@@ -1048,7 +1048,7 @@ def _repair_katakana_fragments(segment: str, tokens: list[_Token]) -> list[_Toke
             repairs[match.start()] = _Token(match.group(), match.group(), match.group(),
                 fields[0], fields[1], fields[12], fields[6], match.start(), match.end(),
                 lemma=lemma)
-        except (AttributeError, RuntimeError, TypeError):
+        except (AttributeError, NameError, RuntimeError, TypeError):
             continue
     result = []
     end = 0
@@ -1423,7 +1423,7 @@ def _dictionary_loanwords(segment: str, tokens: list[_Token]) -> dict[int, str]:
                 candidate = candidate.bnext
             if not found:
                 return {}
-    except (AttributeError, RuntimeError, TypeError):
+    except (AttributeError, NameError, RuntimeError, TypeError):
         # Restoration is optional; an unavailable lattice API must not make
         # otherwise valid phonetic romanization fail or count as evidence.
         return {}
@@ -2110,15 +2110,16 @@ def to_romaji(text: str, *, use_overrides: bool = True,
     ``report`` collects one dict per rendered word; :func:`explain_romaji`
     is the convenient wrapper.
     """
-    if not MECAB_AVAILABLE:
-        return text
-
-    # Title-level override (exact match on the full input)
+    # Title-level override (exact match on the full input).  A reviewed
+    # spelling needs no dictionary, so it applies even without MeCab.
     if use_overrides and text in _TITLE_OVERRIDES:
         if report is not None:
             report.append({"written": text, "romaji": _TITLE_OVERRIDES[text],
                            "reading": "", "source": "title", "flags": []})
         return _TITLE_OVERRIDES[text]
+
+    if not MECAB_AVAILABLE:
+        return text
 
     # Normalise half-width katakana (ｱ-ﾝ) to full-width, and full-width
     # Latin/digits (Ａ, １) to ASCII, before any processing.

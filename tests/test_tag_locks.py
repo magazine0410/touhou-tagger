@@ -50,7 +50,9 @@ class TagLockStoreTests(_LockStoreCase):
         )
         self.assertTrue(tag_locks.is_locked("/music/a.flac", "grouping"))
         self.assertFalse(tag_locks.is_locked("/music/a.flac", "title"))
-        self.assertEqual(tag_locks.locked_files(), ["/music/a.flac"])
+        # Keys are stored normalised; on Windows abspath adds the drive.
+        self.assertEqual(tag_locks.locked_files(),
+                         [os.path.normpath(os.path.abspath("/music/a.flac"))])
 
     def test_unlocking_the_last_tag_drops_the_entry(self):
         tag_locks.set_lock("/music/a.flac", "grouping", True)
