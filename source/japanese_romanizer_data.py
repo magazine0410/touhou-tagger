@@ -798,6 +798,59 @@ _LOANWORDS: dict[str, str] = {
     "tainiishangurira": "Tiny Shangri-La",      # タイニーシャングリラ
     "ruumuzahisutorii": "Room the History",      # ルームザヒストリー
     "torioido・toukeatto": "Trioid Toykeat",     # トリオイド・トウケアット
+
+    # --- Falcom soundtracks (2026-10-21 review of the jdk collection) ---
+
+    # UniDic's etymon for ズボン is French jupon; the Japanese word is the
+    # usual spelling.  データロード is a load, not the road of "roodo".
+    "zubon":            "Zubon",         # 半ズボン
+    "deetaroodo":       "Data Load",     # PCMデータロード
+    # Split as ふぁっ + きんぐ, whose second word would otherwise be "King".
+    "fakkingu":         "Fucking",       # ふぁっきんぐっ！
+    # English words UniDic leaves phonetic or splits (メモ + リア).
+    "serenaade":        "Serenade",      # セレナーデ
+    "memoria":          "Memoria",       # メモリア
+    "vaakaru":          "Vocal",         # ヴァーカル (Romancia's spelling)
+    "vaajon":           "Version",       # ヴァージョン
+    "bookaru":          "Vocal",         # ボーカル
+    "arenji":           "Arrange",       # アレンジ
+    "danjon":           "Dungeon",       # ダンジョン
+    "kuiin":            "Queen",         # クイーン
+    "kuiinmarii":       "Queen Mary",    # クイーンマリー号 (Sorcerian)
+    "kingu":            "King",          # キング
+    "medyuusa":         "Medusa",        # メデューサ
+    "bosu":             "Boss",          # ボス
+    "batoru":           "Battle",        # バトル
+    "suteeji":          "Stage",         # ステージ
+    "famirii":          "Family",        # ファミリー
+    "jonii":            "Johnny",        # ジョニー
+    "raguuna":          "Laguna",        # ラグーナ
+    "shinario":         "Scenario",      # シナリオ
+    "rushiferu":        "Lucifer",       # ルシフェル
+    # グランド alone may be "ground"; only these compounds are reviewed.
+    "gurandopuroroogu": "Grand Prologue",  # グランドプロローグ
+    "gurandoepiroogu":  "Grand Epilogue",  # グランドエピローグ
+    # Falcom game titles and series names.
+    "iisu":             "Ys",            # イース
+    "zanadu":           "Xanadu",        # ザナドゥ
+    "zanadushinario":   "Xanadu Scenario",  # ザナドゥシナリオ
+    "romanshia":        "Romancia",      # ロマンシア
+    "doragonsureiyaa":  "Dragon Slayer", # ドラゴンスレイヤー
+    # Names with Falcom's own English spellings (Ys, Ys III, Ys IV, Sorcerian).
+    "riria":            "Lilia",         # リリア
+    "eriize":           "Elise",         # エリーゼ
+    "erena":            "Elena",         # エレナ
+    "sutikusu":         "Styx",          # スティクス
+    "redomondo":        "Redmont",       # レドモンド
+    "redomonto":        "Redmont",       # レドモント
+    "tiguree":          "Tigray",        # ティグレー採石場
+    "baresutain":       "Valestein",     # バレスタイン城
+    "garubaran":        "Galbalan",      # ガルバラン
+    "irubaanzu":        "Illburns",      # イルバーンズの遺跡
+    "erudaamu":         "Eldam",         # エルダーム山脈
+    "kefin":            "Kefin",         # ケフィン王国
+    "seruseta":         "Celceta",       # セルセタの樹海
+    "pentaua":          "Pentawa",       # ペンタウァ
 }
 
 _TITLE_OVERRIDES: dict[str, str] = {
@@ -1170,6 +1223,10 @@ _PHRASE_OVERRIDES: dict[tuple, str] = {
 
     # T10 subtitle — yojijukugo read as all on'yomi
     ("前", "退", "後", "進"):    "Zentaikoushin",    # 前 misread as "mae"
+
+    # Classical adjective 碧き (aoki); UniDic reads 碧 as the noun midori
+    # and leaves き stranded (碧き願い, Falcom).
+    ("碧", "き"):           "Aoki",
 }
 
 # Explicit non-Japanese exceptions to the default-Japanese file-tagging policy.
