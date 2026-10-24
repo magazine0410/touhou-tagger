@@ -159,3 +159,24 @@ class ReviewedPreviewDataTests(unittest.TestCase):
             with self.subTest(title=title):
                 self.assertEqual(r.to_romaji(title), expected)
         self.assertNotEqual(r.to_romaji("らくえんおうた", use_overrides=False), "Rakuen no Uta")
+
+    def test_reviewed_spellings_from_the_falcom_review_in_library_titles(self):
+        for title, expected in {
+            # A suffix joined to Boss read Bosssen.
+            "博麗神社周辺ボス戦": "Hakurei Jinja Shuuhen Boss-sen",
+            "霧雨魔法店ボス戦1": "Kirisame Mahouten Boss-sen 1",
+            "例大祭バトル中": "Rei Taisai Battle-chuu",
+            "碧き願い": "Aoki Negai",
+            "追憶はセピア色に塗られた碧き風穴にて":
+                "Tsuioku wa Sepia Iro ni Nurareta Aoki Fuuketsu nite",
+            # The kingu loanword read these as Su Pa~King.
+            "トロピカ～ル☆すぱ～きんぐ": "Tropical☆Sparking",
+            "トロピカルすぱ～きんぐ ～ Tropical Beach": "Tropical Sparking ~ Tropical Beach",
+            "イースⅡ": "Ys II",
+        }.items():
+            with self.subTest(title=title):
+                self.assertEqual(r.to_romaji(title), expected)
+        # 碧き is reviewed only before 願い and 風穴, never inside きらめく,
+        # and the short Ys key does not read the colloquial いいす.
+        self.assertIn("Kirameku", r.to_romaji("碧きらめく"))
+        self.assertNotIn("Ys", r.to_romaji("いいすね"))

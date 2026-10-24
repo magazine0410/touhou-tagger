@@ -83,6 +83,11 @@ Removed, or Security; do not use this file as a commit-by-commit log.
 
 ### Fixed
 
+- A short reviewed loanword spelling no longer replaces hiragana words that
+  only share its sound: `いいすね` (an adjective plus a colloquial ending)
+  was romanized `Ys ne`. Split kana spellings of the word itself, such as
+  `ぬ` + `え` for `Nue`, still take the reviewed spelling.
+
 - Reviewed exact-title spellings are applied even when MeCab is not
   installed, and the romanizer's lattice helpers tolerate a missing MeCab
   module instead of raising. The offline test suite now passes on runners

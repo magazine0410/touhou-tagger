@@ -273,6 +273,19 @@ class ReviewFixTests(unittest.TestCase):
                 ('紅魔郷', _feature('紅魔郷', 'コウマキョウ', goshu='漢'))]
         self.assertEqual(self.convert(long, {'touhoukoumakyou': 'Reviewed'}), 'Reviewed')
 
+    def test_short_keys_skip_a_kana_inflection_with_the_same_sound(self):
+        ii = ('いい', _feature('いい', 'イイ', '形容詞', '非自立可能',
+                               conjugation='終止形-一般'))
+        su = ('す', _feature('す', 'ス', '助動詞', '*', conjugation='終止形-一般'))
+        self.assertEqual(self.convert([ii, su], {'iisu': 'Ys'}), 'Iisu')
+        # Katakana is a borrowing's own spelling, whatever its tags say.
+        katakana = [('イー', _feature('イー', 'イー', goshu='外')),
+                    ('ス', _feature('ス', 'ス', '動詞', '一般'))]
+        self.assertEqual(self.convert(katakana, {'iisu': 'Ys'}), 'Ys')
+        sugi = ('すぎ', _feature('すぎ', 'スギ', '動詞', '非自立可能',
+                                 conjugation='連用形-一般'))
+        self.assertEqual(self.convert([ii, sugi], {'iisugi': 'Reviewed'}), 'Reviewed')
+
     def test_suffix_replacement_never_leaves_a_capital_mid_word(self):
         rows = [('三', _feature('三', 'サン', '名詞', '数詞', goshu='漢')),
                 ('輪', _feature('輪', 'リン', '接尾辞', '名詞的', goshu='漢')),

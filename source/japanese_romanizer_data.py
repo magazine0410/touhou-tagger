@@ -821,6 +821,10 @@ _LOANWORDS: dict[str, str] = {
     "medyuusa":         "Medusa",        # メデューサ
     "bosu":             "Boss",          # ボス
     "batoru":           "Battle",        # バトル
+    # A suffix joins a reviewed spelling with no space (Boss + sen would
+    # read Bosssen), so these game-music compounds are hyphenated.
+    "bosusen":          "Boss-sen",      # ボス戦
+    "batoruchuu":       "Battle-chuu",   # 例大祭バトル中
     "suteeji":          "Stage",         # ステージ
     "famirii":          "Family",        # ファミリー
     "jonii":            "Johnny",        # ジョニー
@@ -875,6 +879,10 @@ _TITLE_OVERRIDES: dict[str, str] = {
     # cannot infer it from the deliberately playful hiragana spelling.
     # https://linkco.re/ttPFHUxN?lang=en (track 8)
     "は～りぃすたーふぃっしゅ": "Hurry, Starfish",
+    # すぱ～きんぐ is "sparking" (スパーキング); left to the kingu
+    # loanword its last word reads King.  No official English title found.
+    "トロピカルすぱ～きんぐ": "Tropical Sparking",
+    "トロピカ～ル☆すぱ～きんぐ": "Tropical☆Sparking",
     # Official Touhou game names.  These are the conventional title
     # readings, rather than whatever general-purpose MeCab happens to
     # choose for the same kanji in ordinary prose.  The phrase table below
@@ -1224,9 +1232,13 @@ _PHRASE_OVERRIDES: dict[tuple, str] = {
     # T10 subtitle — yojijukugo read as all on'yomi
     ("前", "退", "後", "進"):    "Zentaikoushin",    # 前 misread as "mae"
 
-    # Classical adjective 碧き (aoki); UniDic reads 碧 as the noun midori
-    # and leaves き stranded (碧き願い, Falcom).
-    ("碧", "き"):           "Aoki",
+    # Classical adjective 碧き (aoki).  UniDic usually reads it correctly,
+    # but in these titles it reads 碧 as the noun midori and misreads the
+    # next word.  A bare 碧き key would also match inside 碧きらめく and
+    # join a following one-kanji noun to it (Aokikai).
+    ("碧", "き", "願い"):    "Aoki Negai",       # Falcom
+    # 風穴 is Fuuketsu, as in Subterranean Animism's 暗闇の風穴.
+    ("碧", "き", "風穴"):    "Aoki Fuuketsu",
 }
 
 # Explicit non-Japanese exceptions to the default-Japanese file-tagging policy.

@@ -1312,6 +1312,12 @@ def _loanword_match(tokens: list[_Token],
                 or all(t.goshu == "外" for t in tokens)
                 or (len(tokens) == 1 and tokens[0].sub_pos == "固有名詞"
                     and tokens[0].pos3 == "地名"))
+    # A short key suits the fragments of a split kana spelling (ぬ + え),
+    # not a kana inflection that merely sounds the same: いい + す is not
+    # イース.  A long key still matches a run of several words below.
+    if (len(tokens) > 1 and not re.fullmatch(r"[ァ-ヺー]+", written)
+            and any(t.pos in ("動詞", "形容詞") for t in tokens)):
+        eligible = False
     # Retain compatibility with foreign-word keys built from older UniDic
     # lemma spellings (e.g. ボヤージュ / ヴォヤージュ), without normalizing
     # native colloquial words such as あたし back into their lemmas.
