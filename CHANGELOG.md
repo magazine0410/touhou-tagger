@@ -132,6 +132,16 @@ Removed, or Security; do not use this file as a commit-by-commit log.
   that draw one track from each of many circles were affected worst. The
   same mapping fed `artistsort` and `albumartistsort`.
 
+### Security
+
+- The English Touhou Wiki fetch now launches Chromium with its sandbox
+  enabled; Playwright leaves it off by default. It also prefers the system's
+  Google Chrome stable, which updates itself, over Playwright's bundled
+  Chromium, which can trail Chrome security releases (Playwright 1.64.1 still
+  bundles a Chromium 156 build without the fixes for CVE-2026-118306,
+  CVE-2026-118331, CVE-2026-118344 and CVE-2026-118348). The bundled
+  Chromium is still used, sandboxed, when Chrome is not installed.
+
 ## 0.1.0 - 2026-08-05
 
 ### Added

@@ -18,8 +18,9 @@ from bs4 import BeautifulSoup
 from app_version import USER_AGENT
 
 try:
-    from playwright.sync_api import sync_playwright
+    from playwright.sync_api import Error as PlaywrightError, sync_playwright
 except ImportError as _exc:  # pragma: no cover - exercised only without the dep
+    PlaywrightError = None
     sync_playwright = None
     _PLAYWRIGHT_IMPORT_ERROR: str | None = str(_exc)
 else:
@@ -49,6 +50,22 @@ def is_available() -> bool:
 ZWS = "\u200b"
 
 
+def _launch_browser(p):
+    """Launch a sandboxed Chromium, preferring the system's Chrome stable.
+
+    Playwright turns the Chromium sandbox off unless asked, and its bundled
+    Chromium trails Chrome's security releases, so a hostile page could
+    reach the rest of the system.  Chrome stable updates itself; the bundled
+    build is used only when Chrome is not installed.  The sandbox stays on
+    either way.
+    """
+    try:
+        return p.chromium.launch(channel="chrome", chromium_sandbox=True)
+    except PlaywrightError as exc:
+        print(f"Google Chrome unavailable ({exc}); using Playwright's Chromium")
+        return p.chromium.launch(chromium_sandbox=True)
+
+
 def fetch_album_html(wiki_page_name: str) -> str:
     if sync_playwright is None:
         raise RuntimeError(
@@ -64,7 +81,7 @@ def fetch_album_html(wiki_page_name: str) -> str:
         candidates.append(wiki_page_name.replace("/", f"{ZWS}/{ZWS}"))
 
     with sync_playwright() as p:
-        browser = p.chromium.launch()
+        browser = _launch_browser(p)
         page = browser.new_page(user_agent=USER_AGENT)
         html = None
         last_error: Exception | None = None
