@@ -50,11 +50,15 @@ If it is missing:
 
 ### Playwright Chromium
 
-The English Touhou Wiki fetch uses the Chromium binary managed by the Python
-`playwright` package. It is not searched for on `PATH`; Playwright maintains
-its own version-matched browser installation.
+The English Touhou Wiki fetch uses Google Chrome stable when it is installed
+in its standard location, because Chrome updates itself and Playwright's
+bundled Chromium can lag behind Chrome security fixes. Without Chrome, it uses
+the Chromium binary managed by the Python `playwright` package. Neither is
+searched for on `PATH`. Both are launched with the Chromium sandbox enabled,
+which Playwright otherwise leaves off.
 
-Install it after installing the Python package:
+If Chrome is not installed, install Playwright's Chromium after installing the
+Python package:
 
 ```bash
 python -m playwright install chromium
@@ -70,6 +74,11 @@ python -m playwright install --with-deps chromium
 See the [official Playwright browser documentation](https://playwright.dev/python/docs/browsers).
 Playwright browser versions are tied to the installed Python package, so rerun
 the install command after upgrading Playwright if it requests a newer browser.
+
+On Linux the sandbox needs unprivileged user namespaces. Some distributions,
+such as Ubuntu 24.04 and later, restrict them for binaries without an AppArmor
+profile, so Playwright's Chromium may fail to launch there; installing Google
+Chrome avoids this. The tagger never falls back to an unsandboxed browser.
 
 If Chromium is missing or cannot launch, the English-wiki attempt reports its
 exception and the album lookup falls back to THBWiki. It does not prevent
