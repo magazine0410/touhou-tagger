@@ -962,6 +962,15 @@ _TITLE_OVERRIDES: dict[str, str] = {
     # Publisher explicitly gives ショウエン セイキツ:
     # https://www.4gamer.net/games/429/G042972/20180809115/
     "燋燄誓契": "Shouen Seikitsu",
+    # UNDEAD CORPORATION, 紅染の鬼が哭く: the archaic reading はふり,
+    # a homophone of 祝 (the Suwa priest the lyrics call for), not ソウ.
+    # https://en.touhouwiki.net/wiki/Lyrics:_葬
+    # Not scoped to the artist: any title whose whole base is 葬 reads so.
+    "葬": "Hafuri",
+    # C-CLAYS (TOCD-0062, TOCD-0069) is a different song with no source for
+    # はふり; these longer keys keep its dictionary reading.
+    "葬～Dear knows～": "Sou~Dear knows~",
+    "葬 ～ Dear knows ～": "Sou ~ Dear knows ~",
     # Known theme bases, including simplified-Chinese spelling aliases.
     # Keep these scoped to titles; a global character conversion would also
     # reinterpret Chinese translations as if they were Japanese originals.

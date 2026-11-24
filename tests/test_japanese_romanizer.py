@@ -47,6 +47,19 @@ class JapaneseRomanizerTests(unittest.TestCase):
         self.assertFalse(japanese_romanizer._has_unresolved_output(
             japanese_romanizer.to_romaji(live), live))
 
+    def test_standalone_sou_title_reads_hafuri_without_changing_compounds(self):
+        for title, expected in {
+            "葬": "Hafuri",
+            "葬 [Instrumental]": "Hafuri [Instrumental]",
+            "葬 (Bamboo flute version)": "Hafuri (Bamboo flute version)",
+        }.items():
+            with self.subTest(title=title):
+                self.assertEqual(japanese_romanizer.to_romaji(title), expected)
+        for title in ("葬列", "花葬", "少女幻葬", "幻を葬る少女",
+                      "葬～Dear knows～ -off vocal-", "葬 ～ Dear knows ～"):
+            with self.subTest(title=title):
+                self.assertNotIn("Hafuri", japanese_romanizer.to_romaji(title))
+
     def test_default_japanese_retains_explicit_chinese_exclusions(self):
         for title in ("明鏡止水", "東京", "清明", "棱彩", "夜の歌 (月下独舞)"):
             self.assertIsNone(japanese_romanizer._language_skip_reason(title))
