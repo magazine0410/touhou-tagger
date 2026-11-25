@@ -12,6 +12,10 @@ TouhouDB is **not** a primary metadata source.  It is queried only to:
      takes precedence over the THBWiki Staff-section mapping.
   3. Cross-check the album's release date and catalog number against the wiki
      values (verify-and-notify only — TouhouDB never overwrites them).
+  4. Supply per-song genres (tags in TouhouDB's ``Genres`` category), which
+     the tagger merges into the ``genre`` tag alongside THBWiki's album-level
+     genres.  They arrive in the same album-tracks request as the per-track
+     titles, so they cost no extra request.
 
 TouhouDB is built on the same platform as VocaDB and shares its public REST
 API (https://touhoudb.com/api).  No authentication is needed for read-only
@@ -246,6 +250,53 @@ def _entry_all_names(entry: dict) -> set[str]:
 # ---------------------------------------------------------------------------
 # Client
 # ---------------------------------------------------------------------------
+# Small words left lowercase by format_genre_name() unless they come first.
+_GENRE_MINOR_WORDS = frozenset({"a", "and", "in", "n", "of", "or", "the"})
+
+
+def _genre_tag_names(tags) -> list[str]:
+    """Names of the ``Genres``-category tags in a tag-usage list, in order.
+
+    TouhouDB tags span many categories (``Composition``, ``Vocalists``,
+    ``Distribution``, …); only the ``Genres`` category holds musical genres.
+    Every tag counts regardless of its vote count.
+    """
+    names: list[str] = []
+    for usage in tags or []:
+        tag = (usage or {}).get("tag") or {}
+        if tag.get("categoryName") != "Genres":
+            continue
+        name = (tag.get("name") or "").strip()
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def format_genre_name(name: str) -> str:
+    """Title-case a TouhouDB genre tag name for the ``genre`` tag.
+
+    Capitalises only words (and hyphen-separated parts) that are entirely
+    lowercase, so acronyms and mixed-case names keep their spelling:
+    ``"electro house"`` → ``"Electro House"``, ``"post-rock"`` →
+    ``"Post-Rock"``, ``"drum and bass"`` → ``"Drum and Bass"``, while
+    ``"EDM"`` and ``"J-POP"`` are unchanged.  ``str.title()`` is not used
+    because it rewrites ``"EDM"`` as ``"Edm"``.
+    """
+    words = name.split(" ")
+    out: list[str] = []
+    for i, word in enumerate(words):
+        if i > 0 and word in _GENRE_MINOR_WORDS:
+            out.append(word)
+            continue
+        parts = word.split("-")
+        out.append("-".join(
+            p[0].upper() + p[1:] if p and p.islower() and p[0].isalpha()
+            else p
+            for p in parts
+        ))
+    return " ".join(out)
+
+
 class TouhouDBClient:
     """Read-only TouhouDB client using ``curl`` for transport.
 
@@ -263,6 +314,10 @@ class TouhouDBClient:
         self._tracks_cache: dict[int, dict[tuple[int, int], int]] = {}
         # album id -> {(disc, trackno): track title}
         self._track_titles_cache: dict[int, dict[tuple[int, int], str]] = {}
+        # album id -> {(disc, trackno): [genre names]} (only tracks with any)
+        self._track_genres_cache: dict[int, dict[tuple[int, int], list[str]]] = {}
+        # album id -> [album-level genre names]
+        self._album_genres_cache: dict[int, list[str]] = {}
         # song id -> {"producer": [names], "vocalist": [names]}
         self._song_artist_cache: dict[int, dict[str, list[str]]] = {}
 
@@ -560,19 +615,25 @@ class TouhouDBClient:
     def _album_track_songs(self, album_id: int) -> dict[tuple[int, int], int]:
         """Map ``(disc, trackno) -> song_id`` for an album. Cached.
 
-        A single ``/albums/{id}?fields=Tracks`` fetch also yields each track's
-        title, so this populates :attr:`_track_titles_cache` in the same pass
-        (consumed by :meth:`album_track_titles`) — no extra request.
+        A single ``/albums/{id}?fields=Tracks,Tags&songFields=Tags`` fetch
+        also yields each track's title and the song and album genre tags, so
+        this populates :attr:`_track_titles_cache`, :attr:`_track_genres_cache`
+        and :attr:`_album_genres_cache` in the same pass (consumed by
+        :meth:`album_track_titles` and :meth:`album_genres`) — no extra
+        request.
         """
         if album_id in self._tracks_cache:
             return self._tracks_cache[album_id]
         data = self._get(
             f"/albums/{album_id}",
-            {"fields": "Tracks", "lang": "Default"},
+            {"fields": "Tracks,Tags", "songFields": "Tags", "lang": "Default"},
         )
         mapping: dict[tuple[int, int], int] = {}
         titles: dict[tuple[int, int], str] = {}
+        genres: dict[tuple[int, int], list[str]] = {}
+        album_genres: list[str] = []
         if data:
+            album_genres = _genre_tag_names(data.get("tags"))
             for tr in data.get("tracks", []) or []:
                 disc = int(tr.get("discNumber") or 1)
                 no = tr.get("trackNumber")
@@ -588,8 +649,13 @@ class TouhouDBClient:
                 name = (song.get("name") or tr.get("name") or "").strip()
                 if name:
                     titles[key] = name
+                song_genres = _genre_tag_names(song.get("tags"))
+                if song_genres:
+                    genres[key] = song_genres
         self._tracks_cache[album_id] = mapping
         self._track_titles_cache[album_id] = titles
+        self._track_genres_cache[album_id] = genres
+        self._album_genres_cache[album_id] = album_genres
         return mapping
 
     def album_track_titles(
@@ -605,6 +671,21 @@ class TouhouDBClient:
         if album_id not in self._track_titles_cache:
             self._album_track_songs(album_id)
         return self._track_titles_cache.get(album_id, {})
+
+    def album_genres(
+        self, album_id: int,
+    ) -> tuple[dict[tuple[int, int], list[str]], list[str]]:
+        """Return ``({(disc, trackno): [song genres]}, [album genres])``.
+
+        Names are TouhouDB's raw tag names (mostly lowercase English, e.g.
+        ``"electro house"``); see :func:`format_genre_name`.  Only tracks
+        whose song has at least one genre tag appear in the dict.  Shares the
+        single Tracks fetch with :meth:`album_track_titles`.
+        """
+        if album_id not in self._track_genres_cache:
+            self._album_track_songs(album_id)
+        return (self._track_genres_cache.get(album_id, {}),
+                self._album_genres_cache.get(album_id, []))
 
     def song_credits(self, song_id: int) -> dict[str, list[str]]:
         """Return ``{"producer": [names], "vocalist": [names]}`` (Japanese

@@ -30,7 +30,7 @@ dependencies; for them, check [Installing](#installing) and [DEPENDENCIES.md](do
     - artistsort (when TouhouDB verification is enabled; official TouhouDB romanisation preferred, with a THBWiki fallback — for officially romanized names like e.g. "Meramipop" instead of "めらみぽっぷ")
     - catalognumber
     - date
-    - genre
+    - genre (album genres from THBWiki; with TouhouDB enabled, also each song's genres from TouhouDB, or TouhouDB's album genres when the song has none)
     - grouping (tag to show Touhou themes; e.g. "Necrofantasia", songs using multiple themes use semi-colons like "Necrofantasia; Spiritual Domination ~ Who done it!")
     - lyricist
     - titlesort (romanized locally)

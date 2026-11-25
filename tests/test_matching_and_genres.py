@@ -55,3 +55,12 @@ class MatchingAndGenreTests(unittest.TestCase):
         )
 
         self.assertEqual(merged, ["Indie", "Rock", "Personal genre", "Electronic"])
+
+    def test_genre_merge_treats_hyphen_and_space_as_the_same(self):
+        merged = touhou_tagger._merge_genres(
+            ["Hip-Hop", "Post-Rock"],
+            ["Hip Hop", "post  rock", "Electro House", "House"],
+        )
+
+        self.assertEqual(
+            merged, ["Hip-Hop", "Post-Rock", "Electro House", "House"])
