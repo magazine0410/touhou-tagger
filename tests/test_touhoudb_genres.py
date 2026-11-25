@@ -72,6 +72,48 @@ class ClientGenreTests(unittest.TestCase):
             self.assertEqual(client.album_genres(1), ({}, []))
 
 
+class CatalogOnlyMatchTests(unittest.TestCase):
+    """A catalog number needs one more agreeing signal.
+
+    Circles reuse catalog numbers: TouhouDB's BOCD-0001 is 文鳥Online。's 蟹,
+    while Black Onyx released DiGiTiZED FAiRiES under the same number.
+    """
+
+    OTHER_CIRCLE = {
+        "id": 18641, "name": "蟹", "catalogNumber": "BOCD-0001",
+        "releaseDate": {"year": 2005, "month": 12, "day": 30},
+        "artists": [{"categories": "Circle", "name": "文鳥Online。",
+                     "artist": {"name": "文鳥Online。"}}],
+    }
+
+    def score(self, item, **kw):
+        client = touhoudb.TouhouDBClient()
+        client.set_match_titles(["DiGiTiZED FAiRiES"])
+        return client._score_album(
+            item, kw.get("catalogs", ["BOCD-0001"]),
+            kw.get("date", "2010-03-14"), kw.get("circles", ["Black Onyx"]))
+
+    def test_catalog_alone_is_rejected(self):
+        self.assertIsNone(self.score(self.OTHER_CIRCLE))
+
+    def test_catalog_with_one_more_signal_is_accepted(self):
+        same_date = dict(self.OTHER_CIRCLE, releaseDate={
+            "year": 2010, "month": 3, "day": 14})
+        self.assertEqual(self.score(same_date), 101)
+        same_name = dict(self.OTHER_CIRCLE, name="DiGiTiZED FAiRiES")
+        self.assertEqual(self.score(same_name), 101)
+
+    def test_find_album_returns_none_for_a_catalog_only_candidate(self):
+        client = touhoudb.TouhouDBClient()
+        client.set_match_titles(["DiGiTiZED FAiRiES"])
+        with patch.object(client, "_get",
+                          return_value={"items": [self.OTHER_CIRCLE]}):
+            self.assertIsNone(client.find_album(
+                album_title="DiGiTiZED FAiRiES", slug=None,
+                catalog_numbers=["BOCD-0001"], date="2010-03-14",
+                circle_names=["Black Onyx"]))
+
+
 class FormatGenreNameTests(unittest.TestCase):
 
     def test_only_lowercase_words_are_capitalised(self):
