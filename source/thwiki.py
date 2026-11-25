@@ -210,6 +210,9 @@ GENRE_TRANSLATIONS: dict[str, str] = {
     # TouhouDB's genre tags are mostly English; the few Japanese-named ones
     # go through this table too (see touhou_tagger._format_tdb_genres).
     "電波ソング":   "Denpa",
+    # 1990s Japanese pop style named after Tokyo's Shibuya district; the
+    # conventional English spelling keeps "kei" lowercase.
+    "渋谷系":       "Shibuya-kei",
     # --- Pre-existing doujin file tags (not THBWiki vocabulary) ---
     # Traditional-character / Japanese forms circles put in their own rips'
     # genre tags.  These describe the *source* (Touhou fan-arrangement)
