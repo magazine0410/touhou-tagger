@@ -534,7 +534,7 @@ class TouhouDBClient:
                     continue
                 if best is None or signals > best[0]:
                     best = (signals, item)
-            # A catalog-confirmed match (max signal weight) is decisive —
+            # A corroborated catalog match (max signal weight) is decisive —
             # stop querying once we have one.
             if best is not None and best[0] >= 100:
                 break
@@ -550,10 +550,14 @@ class TouhouDBClient:
     ) -> int | None:
         """Confidence score for an album candidate, or ``None`` to reject.
 
-        Catalog match alone is decisive (weight 100).  Otherwise a name match
-        is required *and* at least one corroborating signal (date or circle).
-        Returns the additive signal weight so the caller can pick the
-        best-corroborated candidate.
+        A catalog match (weight 100) needs one more agreeing signal — date,
+        name or circle — because circles reuse catalog numbers: TouhouDB's
+        ``BOCD-0001`` is 文鳥Online。's 蟹, while Black Onyx released
+        DiGiTiZED FAiRiES under the same number, so when the right album is
+        missing from TouhouDB a catalog-only candidate is another circle's.
+        Without a catalog match, a name match is required *and* at least one
+        corroborating signal (date or circle).  Returns the additive signal
+        weight so the caller can pick the best-corroborated candidate.
         """
         # --- Catalog (strong, near-unique) ---
         cat_match = False
@@ -590,6 +594,8 @@ class TouhouDBClient:
                         break
 
         if cat_match:
+            if not (date_match or name_match or circle_match):
+                return None
             score = 100
             if date_match:
                 score += 1
