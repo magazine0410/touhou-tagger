@@ -481,6 +481,22 @@ def _local_display_title(local_file: dict) -> str:
         local_file.get("filename", ""))[0].strip()
 
 
+def _format_tdb_genres(names: list[str]) -> list[str]:
+    """Translate and title-case TouhouDB genre tag names, warning on CJK.
+
+    TouhouDB tag names are mostly lowercase English; the few CJK ones go
+    through the same :func:`translate_genre` table as THBWiki's genres.
+    """
+    out: list[str] = []
+    for name in names:
+        g = touhoudb.format_genre_name(translate_genre(name))
+        if genre_is_cjk(g):
+            print(f"  ⚠ No English translation for TouhouDB genre {g!r}")
+        if g not in out:
+            out.append(g)
+    return out
+
+
 def _merge_genres(existing: list[str], wiki: list[str]) -> list[str]:
     """Union a file's existing genres with the wiki's, for the genre write.
 
@@ -494,15 +510,16 @@ def _merge_genres(existing: list[str], wiki: list[str]) -> list[str]:
     form (``Indie``) and dedups against a wiki ``Indie`` instead of sitting
     beside it as a near-duplicate; wiki genres are already English, so the
     pass is a no-op for them, and any existing genre that's plain English or
-    an unmapped term is preserved verbatim.  De-duplication is
-    case-insensitive; existing genres keep their order first, then any wiki
-    genres not already present are appended.
+    an unmapped term is preserved verbatim.  De-duplication ignores case
+    and treats a hyphen the same as a space, so THBWiki's ``Hip-Hop`` and
+    TouhouDB's ``Hip Hop`` count as one genre; existing genres keep their
+    order first, then any wiki genres not already present are appended.
     """
     out: list[str] = []
     seen: set[str] = set()
     for g in list(existing) + list(wiki):
         t = translate_genre(g)
-        key = t.strip().casefold()
+        key = re.sub(r"[\s-]+", " ", t.strip().casefold())
         if key and key not in seen:
             seen.add(key)
             out.append(t)
@@ -920,6 +937,12 @@ class AlbumPlan:
     # track-discrepancy check as a third reference (populated only when a
     # TouhouDB album matched).
     tdb_track_titles: dict = field(default_factory=dict)
+    # TouhouDB genres, already translated and title-cased: per song
+    # {(disc, number): [genres]} (only songs that have any), and the album's
+    # own genres, used for tracks whose song has none.  Populated only when a
+    # TouhouDB album matched and the genre tag is selected.
+    tdb_track_genres: dict = field(default_factory=dict)
+    tdb_album_genres: list = field(default_factory=list)
     # TouhouDB album-level values {album, date, catalog, circle} for the
     # mismatch dialog's TouhouDB column (populated only when matched).
     tdb_album_info: dict = field(default_factory=dict)
@@ -1036,10 +1059,13 @@ def fetch_album_plan(
 
     selected_tags = _effective_selected_tags(selected_tags)
     # Verification is an optional enrichment path for the TouhouDB-derived
-    # outputs (the artist pair, albumartistsort, and the credit tags).  With
-    # none of them selected it cannot affect a file, so don't perform its
-    # network work for a deliberately limited run.
-    use_touhoudb = bool(use_touhoudb and set(selected_tags) & _TOUHOUDB_TAGS)
+    # outputs (the artist pair, albumartistsort, the credit tags, and — when
+    # album metadata is fetched, since the genre write lives in that block —
+    # per-song genres).  With none of them selected it cannot affect a file,
+    # so don't perform its network work for a deliberately limited run.
+    tdb_outputs = _TOUHOUDB_TAGS | (
+        frozenset({"genre"}) if fetch_metadata else frozenset())
+    use_touhoudb = bool(use_touhoudb and set(selected_tags) & tdb_outputs)
     touhoudb_add_missing = bool(touhoudb_add_missing and use_touhoudb)
     selection_options = _tag_selection_fetch_options(
         selected_tags,
@@ -1423,12 +1449,15 @@ def fetch_album_plan(
     # ============================================================
     # TouhouDB is never a primary source.  When enabled it (1) verifies the
     # wiki's staff against TouhouDB's credits, (2) supplies official
-    # romanizations that take precedence over the THBWiki Staff map, and
-    # (3) cross-checks the release date and catalog number (notify-only).
+    # romanizations that take precedence over the THBWiki Staff map,
+    # (3) cross-checks the release date and catalog number (notify-only),
+    # and (4) supplies per-song genres merged with THBWiki's album genres.
     tdb_client: touhoudb.TouhouDBClient | None = None
     tdb_album: dict | None = None
     tdb_album_id = None
     tdb_track_titles: dict[tuple[int, int], str] = {}
+    tdb_track_genres: dict[tuple[int, int], list[str]] = {}
+    tdb_album_genres: list[str] = []
     tdb_album_info: dict[str, str] = {}
     missing_members: list[str] = []
     date_mismatch: tuple[str, str] | None = None
@@ -1485,6 +1514,24 @@ def fetch_album_plan(
                         tdb_album_id)
                 except Exception as exc:
                     print(f"  TouhouDB track-title fetch failed: {exc}")
+
+            # --- Per-song and album genres (same cached Tracks request) ---
+            if (tdb_album_id is not None and fetch_metadata
+                    and "genre" in selected_tags):
+                try:
+                    raw_tracks, raw_album = tdb_client.album_genres(
+                        tdb_album_id)
+                    tdb_track_genres = {
+                        key: _format_tdb_genres(names)
+                        for key, names in raw_tracks.items()
+                    }
+                    tdb_album_genres = _format_tdb_genres(raw_album)
+                    if tdb_track_genres or tdb_album_genres:
+                        print(f"  TouhouDB genres: {len(tdb_track_genres)} "
+                              f"song(s) tagged; album: "
+                              f"{'; '.join(tdb_album_genres) or '(none)'}")
+                except Exception as exc:
+                    print(f"  TouhouDB genre fetch failed: {exc}")
 
             # --- Album-level values for the mismatch dialog's TouhouDB column ---
             tdb_circle = "; ".join(
@@ -1562,6 +1609,8 @@ def fetch_album_plan(
         tdb_client=tdb_client,
         tdb_album_id=tdb_album_id,
         tdb_track_titles=tdb_track_titles,
+        tdb_track_genres=tdb_track_genres,
+        tdb_album_genres=tdb_album_genres,
         tdb_album_info=tdb_album_info,
         missing_members=missing_members,
         date_mismatch=date_mismatch,
@@ -1616,6 +1665,8 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
     tdb_client           = plan.tdb_client
     tdb_album_id         = plan.tdb_album_id
     tdb_track_titles     = plan.tdb_track_titles
+    tdb_track_genres     = plan.tdb_track_genres
+    tdb_album_genres     = plan.tdb_album_genres
     missing_members      = plan.missing_members
     date_mismatch        = plan.date_mismatch
     catalog_mismatch     = plan.catalog_mismatch
@@ -1901,15 +1952,30 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
                     errors += 1
 
             # --- Genre (multi-value, MERGED with existing) ---
-            # Album-level, from the THBWiki info box (translated to
-            # English in the fetch phase).  Unlike the skip-if-present
-            # metadata above, genre is *merged* with whatever the file
-            # already has (see _merge_genres): the album keeps its
-            # pre-existing / hand-added genres AND gains the wiki's, for
-            # a fuller picture of its styles.  Written as separate
-            # multi-value fields (one genre= per genre on FLAC/OGG/Opus)
-            # via set_genres — it can't share the _set_tag loop above.
-            wiki_genres = album_info.get("genres") or []
+            # Album-level from the THBWiki info box, plus (with TouhouDB
+            # enabled) this track's song genres from TouhouDB — or, when
+            # the song has none, TouhouDB's album genres.  Both are
+            # translated/formatted in the fetch phase.  Unlike the
+            # skip-if-present metadata above, genre is *merged* with
+            # whatever the file already has (see _merge_genres): the album
+            # keeps its pre-existing / hand-added genres AND gains the
+            # sources', for a fuller picture of its styles.  Written as
+            # separate multi-value fields (one genre= per genre on
+            # FLAC/OGG/Opus) via set_genres — it can't share the _set_tag
+            # loop above.
+            # Pick the TouhouDB track first, then read its genres: a key
+            # missing from tdb_track_genres means "song has no genres", so
+            # the disc-1 fallback (for a TouhouDB entry listing one disc)
+            # must be decided by tdb_track_titles, which lists every track.
+            song_genres: list[str] = []
+            if wiki_track is not None:
+                tdb_key = (local_file["disc"], wiki_track["number"])
+                if tdb_key not in tdb_track_titles:
+                    tdb_key = (1, wiki_track["number"])
+                song_genres = tdb_track_genres.get(tdb_key) or []
+            wiki_genres = _merge_genres(
+                album_info.get("genres") or [],
+                song_genres or tdb_album_genres)
             if "genre" in file_tags and wiki_genres:
                 existing_genres = read_genres(fpath)
                 merged = _merge_genres(existing_genres, wiki_genres)
@@ -2399,10 +2465,10 @@ def tag_album_from_plan(plan: AlbumPlan, *, on_confirm=None) -> dict:
         f"Skipped: {skipped}  |  "
         f"Errors: {errors}"
     )
-    if fetch_metadata and selected_tags & _METADATA_TAGS and any(
+    if fetch_metadata and selected_tags & _METADATA_TAGS and (any(
             album_info.get(k) for k in (
                 "catalog_numbers", "date", "album", "album_artists", "genres"
-            )):
+            )) or tdb_track_genres or tdb_album_genres):
         m_action = "Would write" if dry_run else "Wrote"
         summary_line += (
             f"  ||  {m_action} metadata: {meta_wrote} new, "
@@ -2769,8 +2835,9 @@ def main() -> None:
             "Enable TouhouDB (touhoudb.com) as a verification source: "
             "checks the wiki's staff against TouhouDB, prefers TouhouDB "
             "official romanizations for the artist/artistsort/albumartist "
-            "tags, and cross-checks the release date and catalog number "
-            "(reporting any differences).  Off by default."
+            "tags, adds TouhouDB's per-song genres to the genre tag, and "
+            "cross-checks the release date and catalog number (reporting "
+            "any differences).  Off by default."
         ),
     )
     parser.add_argument(

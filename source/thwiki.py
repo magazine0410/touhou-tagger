@@ -206,6 +206,10 @@ GENRE_TRANSLATIONS: dict[str, str] = {
     "ダンス":       "Dance",
     "インストゥルメンタル": "Instrumental",
     "インスト":     "Instrumental",
+    # --- TouhouDB tag names (not THBWiki vocabulary) ---
+    # TouhouDB's genre tags are mostly English; the few Japanese-named ones
+    # go through this table too (see touhou_tagger._format_tdb_genres).
+    "電波ソング":   "Denpa",
     # --- Pre-existing doujin file tags (not THBWiki vocabulary) ---
     # Traditional-character / Japanese forms circles put in their own rips'
     # genre tags.  These describe the *source* (Touhou fan-arrangement)

@@ -1191,8 +1191,9 @@ def gui_main() -> None:
                 "Use TouhouDB (touhoudb.com) as a verification source: "
                 "check the wiki's staff against TouhouDB, prefer TouhouDB "
                 "official romanizations for the artist / artistsort / "
-                "albumartist tags, and cross-check the release date and "
-                "catalog number (differences are reported, never written)."
+                "albumartist tags, add TouhouDB's per-song genres to the "
+                "genre tag, and cross-check the release date and catalog "
+                "number (differences are reported, never written)."
             )
             self._touhoudb_cb.toggled.connect(self._sync_touhoudb_ui)
             sidebar_layout.addWidget(self._touhoudb_cb)
