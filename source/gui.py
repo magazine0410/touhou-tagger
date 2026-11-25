@@ -857,6 +857,9 @@ def gui_main() -> None:
             # finish at close time: the run still ends cleanly, it just
             # doesn't pop its summary dialog in front of a closing window.
             self._shutting_down = False
+            # Authentication-check threads started from the auth dialog,
+            # held until each has stopped (see _release_auth_test_worker).
+            self._auth_test_workers: list[QtCore.QThread] = []
             self._suppress_slug_persistence = False
             self._active_wiki_tags: set[str] = set(
                 preferences.wiki_tag_selection()
@@ -1747,6 +1750,27 @@ def gui_main() -> None:
         def _open_thwiki_auth_dialog(self) -> None:
             self._open_auth_dialog("thwiki")
 
+        def _release_auth_test_worker(self) -> None:
+            """Drop a finished authentication-check thread.
+
+            ``finished`` is emitted just before the thread stops, so wait for
+            it to return (immediate at this point) before releasing the last
+            reference; destroying a running QThread aborts the process.
+            """
+            worker = self.sender()
+            if worker in self._auth_test_workers:
+                worker.wait()
+                self._auth_test_workers.remove(worker)
+
+        def wait_for_auth_tests(self) -> None:
+            """Wait, servicing events, for running authentication checks."""
+            while any(w.isRunning() for w in self._auth_test_workers):
+                QtWidgets.QApplication.processEvents(
+                    QtCore.QEventLoop.AllEvents, 100,
+                )
+                for worker in list(self._auth_test_workers):
+                    worker.wait(50)
+
         def _open_auth_dialog(self, site: str) -> None:
             """Edit one site's browser source and session auth settings."""
             info = _AUTH_SITE_INFO[site]
@@ -1983,7 +2007,11 @@ def gui_main() -> None:
                 worker = _AuthTestWorker(site)
                 test_worker["thread"] = worker
                 worker.done.connect(_on_test_done)
-                worker.finished.connect(worker.deleteLater)
+                # The tab owns the thread until it has stopped: `done` is
+                # emitted from inside run(), so dropping the dialog's
+                # reference in _on_test_done would destroy a running QThread.
+                self._auth_test_workers.append(worker)
+                worker.finished.connect(self._release_auth_test_worker)
                 worker.start()
 
             def _on_clear() -> None:
@@ -6093,6 +6121,10 @@ def gui_main() -> None:
                     "last_tab": self._tabs.currentIndex(),
                 }
             )
+            # An authentication check has no cancel point; it ends at its
+            # request timeout.  Letting interpreter shutdown destroy its
+            # running QThread would abort the process.
+            self._wiki_tab.wait_for_auth_tests()
             super().closeEvent(event)
 
     app = QtWidgets.QApplication(sys.argv)
