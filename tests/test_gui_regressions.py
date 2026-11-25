@@ -253,6 +253,62 @@ class GuiRegressionTests(unittest.TestCase):
         ''')
         self._run_gui_script(script)
 
+    def test_auth_test_worker_survives_its_result_and_window_close(self):
+        # The result slot used to drop the only reference to the check's
+        # QThread while the thread was still returning from run(), so Qt
+        # aborted with "QThread: Destroyed while thread is still running".
+        script = textwrap.dedent('''
+            import logging
+            import threading
+            from unittest.mock import patch
+            from PyQt5 import QtCore, QtGui, QtWidgets
+            import gui
+            import thwiki
+
+            release = threading.Event()
+
+            def exercise(app):
+                window = next(w for w in app.topLevelWidgets()
+                              if hasattr(w, "_wiki_tab"))
+                wiki = window._wiki_tab
+
+                def drive(dlg):
+                    test_btn = next(b for b in dlg.findChildren(QtWidgets.QPushButton)
+                                    if b.text() == "Test authentication")
+                    for _ in range(40):
+                        test_btn.click()
+                        deadline = QtCore.QDeadlineTimer(5000)
+                        while not test_btn.isEnabled() and not deadline.hasExpired():
+                            app.processEvents(QtCore.QEventLoop.AllEvents, 10)
+                        assert test_btn.isEnabled()
+                    # Leave one check running when the dialog closes.
+                    release.clear()
+                    test_btn.click()
+                    return QtWidgets.QDialog.Rejected
+
+                release.set()
+                with patch.object(QtWidgets.QDialog, "exec_", drive):
+                    wiki._open_auth_dialog("thwiki")
+                # Closing the window waits for the unfinished check.
+                QtCore.QTimer.singleShot(200, release.set)
+                event = QtGui.QCloseEvent()
+                window.closeEvent(event)
+                assert event.isAccepted()
+                assert not any(w.isRunning() for w in wiki._auth_test_workers)
+                return 0
+
+            def validate():
+                release.wait(5)
+
+            with patch.object(gui, "_setup_gui_logging", return_value=(
+                logging.getLogger("gui-test"), None
+            )), patch.object(gui, "_refresh_auth_cookie", return_value=False), \\
+                    patch.object(thwiki, "validate_thwiki_cookie", validate), \\
+                    patch.object(QtWidgets.QApplication, "exec_", exercise):
+                gui.gui_main()
+        ''')
+        self._run_gui_script(script)
+
     def _run_gui_script(self, script):
         with tempfile.TemporaryDirectory() as tmp:
             env = dict(os.environ, QT_QPA_PLATFORM="offscreen",
