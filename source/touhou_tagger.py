@@ -485,11 +485,15 @@ def _format_tdb_genres(names: list[str]) -> list[str]:
     """Translate and title-case TouhouDB genre tag names, warning on CJK.
 
     TouhouDB tag names are mostly lowercase English; the few CJK ones go
-    through the same :func:`translate_genre` table as THBWiki's genres.
+    through the same :func:`translate_genre` table as THBWiki's genres.  A
+    translated name is already spelled as wanted (``Shibuya-kei``), so only
+    untranslated names are title-cased.
     """
     out: list[str] = []
     for name in names:
-        g = touhoudb.format_genre_name(translate_genre(name))
+        translated = translate_genre(name)
+        g = (translated if translated != name
+             else touhoudb.format_genre_name(name))
         if genre_is_cjk(g):
             print(f"  ⚠ No English translation for TouhouDB genre {g!r}")
         if g not in out:

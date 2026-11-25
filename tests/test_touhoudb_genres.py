@@ -142,6 +142,11 @@ class FormatGenreNameTests(unittest.TestCase):
         self.assertEqual(touhou_tagger._format_tdb_genres(["電波ソング"]),
                          ["Denpa"])
 
+    def test_a_translated_name_keeps_its_spelling(self):
+        # Title-casing would turn the translation into "Shibuya-Kei".
+        self.assertEqual(touhou_tagger._format_tdb_genres(["渋谷系"]),
+                         ["Shibuya-kei"])
+
 
 LOCAL_FILES = [
     {"path": "/nonexistent/01 One.flac", "filename": "01 One.flac",
