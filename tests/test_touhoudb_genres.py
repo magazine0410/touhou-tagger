@@ -147,6 +147,20 @@ class FormatGenreNameTests(unittest.TestCase):
         self.assertEqual(touhou_tagger._format_tdb_genres(["渋谷系"]),
                          ["Shibuya-kei"])
 
+    def test_cjk_touhoudb_tags_found_in_the_library_are_translated(self):
+        names = ["えかきうた", "ブチアゲトランス", "和風", "國樂", "国乐",
+                 "東方再翻訳", "萌えポップ", "雅楽", "音頭", "駅メロ"]
+        out = touhou_tagger._format_tdb_genres(names)
+        self.assertFalse([g for g in out if thwiki.genre_is_cjk(g)], out)
+        # Both spellings of 国乐 give one genre.
+        self.assertEqual(out.count("Chinese Traditional"), 1)
+
+    def test_recorded_cjk_genres_are_translated_when_merged(self):
+        # touhoudb_genres.py --apply merges results recorded before a
+        # translation existed, so the merge must translate them.
+        self.assertEqual(touhou_tagger._merge_genres(["Game"], ["國樂"]),
+                         ["Game", "Chinese Traditional"])
+
 
 LOCAL_FILES = [
     {"path": "/nonexistent/01 One.flac", "filename": "01 One.flac",

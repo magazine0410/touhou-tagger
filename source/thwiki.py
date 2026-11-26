@@ -213,6 +213,23 @@ GENRE_TRANSLATIONS: dict[str, str] = {
     # 1990s Japanese pop style named after Tokyo's Shibuya district; the
     # conventional English spelling keeps "kei" lowercase.
     "渋谷系":       "Shibuya-kei",
+    "萌えポップ":   "Moe Pop",
+    "ブチアゲトランス": "Buchiage Trance",
+    # Modern music using traditional Japanese instruments or scales.
+    "和風":         "Japanese Style",
+    # Chinese traditional music (guoyue); traditional and simplified forms.
+    "國樂":         "Chinese Traditional",
+    "国乐":         "Chinese Traditional",
+    "雅楽":         "Gagaku",
+    "音頭":         "Ondo",
+    # These three name a kind of song or source rather than a musical
+    # style, and are translated literally, like 東方アレンジ below.
+    # 絵描き歌: children's songs whose lyrics guide a drawing.
+    "えかきうた":   "Drawing Song",
+    # Japanese train-platform departure melodies.
+    "駅メロ":       "Station Melody",
+    # Lyrics run through machine translation repeatedly, then sung.
+    "東方再翻訳":   "Touhou Retranslation",
     # --- Pre-existing doujin file tags (not THBWiki vocabulary) ---
     # Traditional-character / Japanese forms circles put in their own rips'
     # genre tags.  These describe the *source* (Touhou fan-arrangement)
